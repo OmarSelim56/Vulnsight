@@ -23,6 +23,8 @@ class AlertPayload(BaseModel):
     severity: str
     triage_action: str
     is_malicious: bool
+    attack_type: Optional[str] = None
+    dedup_count: int = 1
     shap_top_features: List[ShapInsight] = Field(default_factory=list)
 
 

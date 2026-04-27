@@ -15,8 +15,8 @@ class Settings:
     auth_bootstrap_admin_username: str = os.getenv("VULNSIGHT_BOOTSTRAP_ADMIN_USERNAME", "admin")
     auth_bootstrap_admin_password: str = os.getenv("VULNSIGHT_BOOTSTRAP_ADMIN_PASSWORD", "admin12345")
     api_auth_token: str = os.getenv("VULNSIGHT_API_AUTH_TOKEN", "")
-    api_auth_username: str = os.getenv("VULNSIGHT_API_AUTH_USERNAME", "")
-    api_auth_password: str = os.getenv("VULNSIGHT_API_AUTH_PASSWORD", "")
+    api_auth_username: str = os.getenv("VULNSIGHT_API_AUTH_USERNAME", "admin")
+    api_auth_password: str = os.getenv("VULNSIGHT_API_AUTH_PASSWORD", "admin12345")
 
 
 settings = Settings()

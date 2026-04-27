@@ -6,3 +6,21 @@ __pycache__/
 # Local datasets and generated artifacts
 dataset/
 *.db
+
+# Runtime upload directory
+database/pcap_uploads/
+
+# Claude Code internal files
+.claude/
+
+# Node / frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Environment secrets
+.env

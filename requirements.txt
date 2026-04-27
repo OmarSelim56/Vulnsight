@@ -4,8 +4,9 @@ nfstream
 numpy
 pandas
 pydantic
+python-multipart
 requests
 scikit-learn
 shap
 torch
-uvicorn
+uvicorn[standard]

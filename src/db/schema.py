@@ -33,13 +33,56 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             destination_ip TEXT NOT NULL,
             severity TEXT NOT NULL,
             is_malicious INTEGER NOT NULL,
-            payload_json TEXT NOT NULL
+            payload_json TEXT NOT NULL,
+            attack_type TEXT DEFAULT 'unknown',
+            dedup_count INTEGER DEFAULT 1,
+            dedup_key TEXT,
+            last_seen_at TEXT
         )
         """
     )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp DESC)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_dst_ip ON alerts(destination_ip)")
+    # Migrate existing tables to add new columns safely
+    _ensure_column(conn, "alerts", "attack_type",  "attack_type TEXT DEFAULT 'unknown'")
+    _ensure_column(conn, "alerts", "dedup_count",  "dedup_count INTEGER DEFAULT 1")
+    _ensure_column(conn, "alerts", "dedup_key",    "dedup_key TEXT")
+    _ensure_column(conn, "alerts", "last_seen_at", "last_seen_at TEXT")
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_timestamp  ON alerts(timestamp DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_severity   ON alerts(severity)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_src_ip     ON alerts(source_ip)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_dst_ip     ON alerts(destination_ip)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_dedup_key  ON alerts(dedup_key, last_seen_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_attack_type ON alerts(attack_type)")
+
+    # Key-value store for configurable thresholds / app settings
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+    # Saved report history
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS saved_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL DEFAULT 'Full Analysis',
+            period TEXT,
+            alert_count INTEGER DEFAULT 0,
+            generated_at TEXT NOT NULL,
+            report_json TEXT NOT NULL,
+            report_size INTEGER DEFAULT 0
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_saved_reports_generated_at ON saved_reports(generated_at DESC)"
+    )
 
     conn.execute(
         """
