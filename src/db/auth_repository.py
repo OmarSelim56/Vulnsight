@@ -37,6 +37,7 @@ class AuthRepository:
     def _connect(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
     def _init_db(self):
@@ -115,3 +116,46 @@ class AuthRepository:
                 (user_id,),
             ).fetchall()
         return [r["name"] for r in rows]
+
+    def list_users(self) -> List[dict]:
+        with self._connect() as conn:
+            users = conn.execute(
+                "SELECT id, username, is_active, created_at FROM users ORDER BY id ASC"
+            ).fetchall()
+            result = []
+            for u in users:
+                roles = self.get_user_roles(u["id"])
+                result.append({
+                    "id": u["id"],
+                    "username": u["username"],
+                    "is_active": bool(u["is_active"]),
+                    "created_at": u["created_at"],
+                    "roles": roles,
+                })
+        return result
+
+    def set_user_active(self, user_id: int, is_active: bool) -> bool:
+        with self._lock:
+            with self._connect() as conn:
+                cur = conn.execute(
+                    "UPDATE users SET is_active = ? WHERE id = ?",
+                    (1 if is_active else 0, user_id),
+                )
+                conn.commit()
+                return cur.rowcount > 0
+
+    def delete_user(self, user_id: int) -> bool:
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute("DELETE FROM user_roles WHERE user_id = ?", (user_id,))
+                cur = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+                conn.commit()
+                return cur.rowcount > 0
+
+    def update_user_roles(self, user_id: int, roles: List[str]) -> bool:
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute("DELETE FROM user_roles WHERE user_id = ?", (user_id,))
+                self._assign_roles(conn=conn, user_id=user_id, roles=roles)
+                conn.commit()
+                return True

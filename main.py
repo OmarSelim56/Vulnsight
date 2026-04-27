@@ -1,4 +1,5 @@
 import warnings
+from pathlib import Path
 
 from src.api.client import DashboardReporter
 from src.core.settings import settings
@@ -7,11 +8,14 @@ from src.detection.engine import InferenceEngine
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
+_PROJECT_ROOT = Path(__file__).parent
+
+
 def start_vulnsight(api_base_url=settings.api_base_url):
     # 1. Initialize core services
     engine = InferenceEngine(
-        model_path="model/vulnsight_cnn_bilstm.pth",
-        scaler_path="model/scaler.pkl",
+        model_path=str(_PROJECT_ROOT / "model" / "vulnsight_cnn_bilstm.pth"),
+        scaler_path=str(_PROJECT_ROOT / "model" / "scaler.pkl"),
         use_shap=True,
     )
     collector = TrafficCollector()

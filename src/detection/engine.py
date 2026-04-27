@@ -1,6 +1,7 @@
 import torch
 import joblib
 import numpy as np
+import pandas as pd
 from collections import deque
 from src.core.model_arch import HybridCNNBiLSTM
 from src.core.feature_config import FEATURE_NAMES
@@ -40,12 +41,13 @@ class InferenceEngine:
         Takes one flow, scales it, adds to window, and predicts.
         Returns: (is_malicious, confidence_score) or (None, 0.0)
         """
-        # A. Convert to NumPy and reshape to (1, 20) to silence warnings
-        # This tells the scaler: "Here is one row of 20 features."
-        features_array = np.array(raw_features).reshape(1, -1)
+        # A. Wrap in a DataFrame with the named columns the scaler was fitted on.
+        #    Passing a plain numpy array causes a UserWarning because the scaler
+        #    was trained with feature names; matching them here suppresses it cleanly.
+        features_df = pd.DataFrame([raw_features], columns=FEATURE_NAMES)
 
-        # B. Scale the raw features using the array
-        scaled_features = self.scaler.transform(features_array)[0]
+        # B. Scale the raw features
+        scaled_features = self.scaler.transform(features_df)[0]
         
         # C. Append to our sliding window (deque handles maxlen automatically)
         self.flow_buffer.append(scaled_features)
