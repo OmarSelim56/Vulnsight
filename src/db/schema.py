@@ -46,6 +46,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "alerts", "dedup_count",  "dedup_count INTEGER DEFAULT 1")
     _ensure_column(conn, "alerts", "dedup_key",    "dedup_key TEXT")
     _ensure_column(conn, "alerts", "last_seen_at", "last_seen_at TEXT")
+    _ensure_column(conn, "alerts", "sensor_id",    "sensor_id TEXT DEFAULT NULL")
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_timestamp  ON alerts(timestamp DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_severity   ON alerts(severity)")
@@ -53,6 +54,26 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_dst_ip     ON alerts(destination_ip)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_dedup_key  ON alerts(dedup_key, last_seen_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_attack_type ON alerts(attack_type)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_sensor_id   ON alerts(sensor_id)")
+
+    # Sensor API keys — used by remote sensor agents to POST alerts
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sensor_keys (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL UNIQUE,
+            key_hash    TEXT NOT NULL UNIQUE,
+            key_prefix  TEXT NOT NULL,
+            is_active   INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL,
+            last_seen_at TEXT,
+            alerts_sent INTEGER DEFAULT 0
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sensor_keys_hash ON sensor_keys(key_hash)"
+    )
 
     # Key-value store for configurable thresholds / app settings
     conn.execute(

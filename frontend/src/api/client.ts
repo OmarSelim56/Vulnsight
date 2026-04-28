@@ -1,6 +1,6 @@
 import type {
   Alert, AttackTypeBreakdown, DetectionStatus, HealthResponse,
-  PcapJob, Report, SavedReport, SeverityBreakdown, Thresholds, TimelinePoint,
+  PcapJob, Report, SavedReport, SensorKey, SeverityBreakdown, Thresholds, TimelinePoint,
   TokenResponse, TopAttacker, UserInfo, UserRecord,
 } from '../types';
 
@@ -185,6 +185,24 @@ export const updateUserRoles = (id: number, roles: string[]) =>
     method: 'PUT',
     body: JSON.stringify({ roles }),
   });
+
+// Sensor key management
+export const listSensors = () => request<SensorKey[]>('/admin/sensors');
+
+export const createSensor = (name: string) =>
+  request<SensorKey & { raw_key: string }>('/admin/sensors', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+
+export const revokeSensor = (id: number) =>
+  request<{ revoked: boolean }>(`/admin/sensors/${id}/revoke`, { method: 'PUT' });
+
+export const activateSensor = (id: number) =>
+  request<{ activated: boolean }>(`/admin/sensors/${id}/activate`, { method: 'PUT' });
+
+export const deleteSensor = (id: number) =>
+  request<{ deleted: boolean }>(`/admin/sensors/${id}`, { method: 'DELETE' });
 
 // CSV export (triggers browser download)
 export function downloadCsv(limit = 5000) {

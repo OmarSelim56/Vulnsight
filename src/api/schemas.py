@@ -26,6 +26,7 @@ class AlertPayload(BaseModel):
     attack_type: Optional[str] = None
     dedup_count: int = 1
     shap_top_features: List[ShapInsight] = Field(default_factory=list)
+    sensor_id: Optional[str] = None
 
 
 class ReportPayload(BaseModel):

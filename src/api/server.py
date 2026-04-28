@@ -9,9 +9,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from src.api.auth.dependencies import require_roles, set_auth_repository as set_auth_dep_repository
 from src.api.auth.routes import router as auth_router
 from src.api.auth.routes import set_auth_repository as set_auth_routes_repository
@@ -81,6 +82,7 @@ class ConnectionManager:
 
 
 ws_manager = ConnectionManager()
+_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 @app.get("/api/v1/health")
@@ -97,8 +99,40 @@ def health():
 @app.post("/api/v1/alerts")
 async def ingest_alert(
     alert: AlertPayload,
-    _=Depends(require_roles("admin", "sensor")),
+    x_sensor_key: Optional[str] = Header(None, alias="X-Sensor-Key"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
 ):
+    """Accept alerts from either an admin JWT or a sensor API key."""
+    sensor_name: Optional[str] = None
+
+    if x_sensor_key:
+        # Sensor key auth path
+        sensor = repository.validate_sensor_key(x_sensor_key)
+        if not sensor:
+            raise HTTPException(status_code=403, detail="Invalid or revoked sensor key")
+        sensor_name = sensor["name"]
+        repository.update_sensor_stats(sensor["id"])
+    elif credentials:
+        # JWT auth path — must be admin
+        from src.api.auth.security import decode_access_token
+        try:
+            claims = decode_access_token(credentials.credentials)
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        user_id = int(claims.get("sub", 0))
+        user = auth_repository.get_user_by_id(user_id)
+        if not user or not user.get("is_active"):
+            raise HTTPException(status_code=401, detail="Invalid or inactive user")
+        roles = [r.lower() for r in auth_repository.get_user_roles(user_id)]
+        if "admin" not in roles:
+            raise HTTPException(status_code=403, detail="Admin role required")
+    else:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Attach sensor identity when coming from a sensor key
+    if sensor_name and not alert.sensor_id:
+        alert = alert.model_copy(update={"sensor_id": sensor_name})
+
     # Derive attack_type from the alert label when the caller hasn't set it
     if not alert.attack_type:
         from src.detection.classifier import infer_attack_type_from_label
@@ -368,6 +402,64 @@ def update_user_roles(
     auth_repository.update_user_roles(user_id, roles)
     user = auth_repository.get_user_by_id(user_id)
     return {**user, "roles": auth_repository.get_user_roles(user_id)}
+
+
+# ------------------------------------------------------------------
+# Sensor key management
+# ------------------------------------------------------------------
+
+@app.post("/api/v1/admin/sensors")
+def create_sensor(
+    body: Dict[str, Any],
+    _=Depends(require_roles("admin")),
+):
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Sensor name is required")
+    try:
+        raw_key, record = repository.create_sensor_key(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    # Return the raw key ONCE — it cannot be retrieved again
+    return {**record, "raw_key": raw_key}
+
+
+@app.get("/api/v1/admin/sensors")
+def list_sensors(_=Depends(require_roles("admin"))):
+    return repository.list_sensor_keys()
+
+
+@app.put("/api/v1/admin/sensors/{sensor_id}/revoke")
+def revoke_sensor(
+    sensor_id: int,
+    _=Depends(require_roles("admin")),
+):
+    ok = repository.revoke_sensor_key(sensor_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Sensor not found")
+    return {"revoked": True}
+
+
+@app.put("/api/v1/admin/sensors/{sensor_id}/activate")
+def activate_sensor(
+    sensor_id: int,
+    _=Depends(require_roles("admin")),
+):
+    ok = repository.activate_sensor_key(sensor_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Sensor not found")
+    return {"activated": True}
+
+
+@app.delete("/api/v1/admin/sensors/{sensor_id}")
+def delete_sensor(
+    sensor_id: int,
+    _=Depends(require_roles("admin")),
+):
+    ok = repository.delete_sensor_key(sensor_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Sensor not found")
+    return {"deleted": True}
 
 
 @app.get("/api/v1/admin/thresholds")

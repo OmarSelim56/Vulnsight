@@ -150,15 +150,16 @@ class TestIngestAlert:
         assert resp.status_code == 200
         assert resp.json()["stored"] is True
 
-    def test_ingest_alert_as_sensor(self, client, auth_repo):
-        auth_repo.create_user("sensor1", "SensorPass1", ["sensor"])
+    def test_ingest_alert_analyst_forbidden(self, client, auth_repo):
+        """Only admins may ingest alerts; analyst should be rejected."""
+        auth_repo.create_user("analyst1", "AnalystPass1", ["analyst"])
         login = client.post(
             "/api/v1/auth/login",
-            json={"username": "sensor1", "password": "SensorPass1"},
+            json={"username": "analyst1", "password": "AnalystPass1"},
         )
         headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
         resp = client.post("/api/v1/alerts", json=SAMPLE_ALERT, headers=headers)
-        assert resp.status_code == 200
+        assert resp.status_code == 403
 
     def test_ingest_alert_viewer_forbidden(self, client, viewer_headers):
         resp = client.post("/api/v1/alerts", json=SAMPLE_ALERT, headers=viewer_headers)
@@ -289,3 +290,150 @@ class TestImportFlows:
     def test_import_flows_as_analyst(self, client, analyst_headers):
         resp = client.post("/api/v1/admin/import-flows", headers=analyst_headers)
         assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Sensor key management
+# ---------------------------------------------------------------------------
+
+class TestSensorKeys:
+    def test_create_sensor_key_as_admin(self, client, admin_headers):
+        resp = client.post(
+            "/api/v1/admin/sensors",
+            json={"name": "test-sensor"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["name"] == "test-sensor"
+        assert "raw_key" in body
+        assert body["raw_key"].startswith("vs_")
+
+    def test_create_sensor_key_returns_key_once(self, client, admin_headers):
+        """raw_key must be present on creation response."""
+        resp = client.post(
+            "/api/v1/admin/sensors",
+            json={"name": "one-time"},
+            headers=admin_headers,
+        )
+        assert "raw_key" in resp.json()
+
+    def test_create_sensor_duplicate_name_returns_409(self, client, admin_headers):
+        client.post("/api/v1/admin/sensors", json={"name": "dupe"}, headers=admin_headers)
+        resp = client.post("/api/v1/admin/sensors", json={"name": "dupe"}, headers=admin_headers)
+        assert resp.status_code == 409
+
+    def test_create_sensor_requires_admin(self, client, viewer_headers):
+        resp = client.post(
+            "/api/v1/admin/sensors",
+            json={"name": "sneaky"},
+            headers=viewer_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_list_sensors(self, client, admin_headers):
+        client.post("/api/v1/admin/sensors", json={"name": "s1"}, headers=admin_headers)
+        client.post("/api/v1/admin/sensors", json={"name": "s2"}, headers=admin_headers)
+        resp = client.get("/api/v1/admin/sensors", headers=admin_headers)
+        assert resp.status_code == 200
+        names = [s["name"] for s in resp.json()]
+        assert "s1" in names and "s2" in names
+
+    def test_list_sensors_keys_hidden(self, client, admin_headers):
+        """List endpoint must not expose the raw key."""
+        client.post("/api/v1/admin/sensors", json={"name": "hidden"}, headers=admin_headers)
+        sensors = client.get("/api/v1/admin/sensors", headers=admin_headers).json()
+        for s in sensors:
+            assert "raw_key" not in s
+            assert "key_hash" not in s
+
+    def test_revoke_sensor(self, client, admin_headers):
+        create_resp = client.post(
+            "/api/v1/admin/sensors", json={"name": "revoke-me"}, headers=admin_headers
+        )
+        sid = create_resp.json()["id"]
+        resp = client.put(f"/api/v1/admin/sensors/{sid}/revoke", headers=admin_headers)
+        assert resp.status_code == 200
+        assert resp.json()["revoked"] is True
+
+    def test_activate_sensor(self, client, admin_headers):
+        create_resp = client.post(
+            "/api/v1/admin/sensors", json={"name": "revoke-activate"}, headers=admin_headers
+        )
+        sid = create_resp.json()["id"]
+        client.put(f"/api/v1/admin/sensors/{sid}/revoke", headers=admin_headers)
+        resp = client.put(f"/api/v1/admin/sensors/{sid}/activate", headers=admin_headers)
+        assert resp.status_code == 200
+        assert resp.json()["activated"] is True
+
+    def test_delete_sensor(self, client, admin_headers):
+        create_resp = client.post(
+            "/api/v1/admin/sensors", json={"name": "delete-me"}, headers=admin_headers
+        )
+        sid = create_resp.json()["id"]
+        resp = client.delete(f"/api/v1/admin/sensors/{sid}", headers=admin_headers)
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] is True
+
+
+# ---------------------------------------------------------------------------
+# Dual-auth on POST /alerts (sensor key path)
+# ---------------------------------------------------------------------------
+
+class TestSensorKeyAlertIngestion:
+    def test_ingest_with_valid_sensor_key(self, client, admin_headers, alert_repo):
+        """A valid sensor key should allow ingesting an alert."""
+        create_resp = client.post(
+            "/api/v1/admin/sensors",
+            json={"name": "field-sensor"},
+            headers=admin_headers,
+        )
+        raw_key = create_resp.json()["raw_key"]
+        resp = client.post(
+            "/api/v1/alerts",
+            json=SAMPLE_ALERT,
+            headers={"X-Sensor-Key": raw_key},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["stored"] is True
+
+    def test_ingest_with_invalid_sensor_key_returns_403(self, client):
+        resp = client.post(
+            "/api/v1/alerts",
+            json=SAMPLE_ALERT,
+            headers={"X-Sensor-Key": "vs_" + "0" * 64},
+        )
+        assert resp.status_code == 403
+
+    def test_ingest_with_revoked_key_returns_403(self, client, admin_headers):
+        create_resp = client.post(
+            "/api/v1/admin/sensors",
+            json={"name": "revoked-sensor"},
+            headers=admin_headers,
+        )
+        body = create_resp.json()
+        raw_key = body["raw_key"]
+        sid = body["id"]
+        client.put(f"/api/v1/admin/sensors/{sid}/revoke", headers=admin_headers)
+        resp = client.post(
+            "/api/v1/alerts",
+            json=SAMPLE_ALERT,
+            headers={"X-Sensor-Key": raw_key},
+        )
+        assert resp.status_code == 403
+
+    def test_sensor_id_stored_in_alert(self, client, admin_headers, alert_repo):
+        """The alert stored by a sensor should carry the sensor name as sensor_id."""
+        create_resp = client.post(
+            "/api/v1/admin/sensors",
+            json={"name": "tagged-sensor"},
+            headers=admin_headers,
+        )
+        raw_key = create_resp.json()["raw_key"]
+        client.post(
+            "/api/v1/alerts",
+            json=SAMPLE_ALERT,
+            headers={"X-Sensor-Key": raw_key},
+        )
+        alerts = alert_repo.get_recent_alerts()
+        assert any(a.sensor_id == "tagged-sensor" for a in alerts)
