@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CheckCircle, Clock, Database, FileUp, FlaskConical,
-  KeyRound, RefreshCw, Settings2, Shield, Trash2, UserPlus, Users, XCircle,
+  RefreshCw, Settings2, Shield, Trash2, UserPlus, Users, XCircle,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -1057,127 +1057,6 @@ function ThresholdsCard() {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-// ─── Roles & Permissions ─────────────────────────────────────────────────────
-
-const PERMISSIONS: { category: string; items: { label: string; admin: boolean; analyst: boolean; viewer: boolean }[] }[] = [
-  {
-    category: 'Dashboard & Monitoring',
-    items: [
-      { label: 'View dashboard & analytics',  admin: true,  analyst: true,  viewer: true  },
-      { label: 'View alert list',             admin: true,  analyst: true,  viewer: true  },
-      { label: 'View detection status',       admin: true,  analyst: true,  viewer: true  },
-      { label: 'View report history',         admin: true,  analyst: true,  viewer: true  },
-    ],
-  },
-  {
-    category: 'Analysis & Exports',
-    items: [
-      { label: 'Generate reports',            admin: true,  analyst: true,  viewer: false },
-      { label: 'Download reports',            admin: true,  analyst: true,  viewer: false },
-      { label: 'Export alerts as CSV',        admin: true,  analyst: true,  viewer: false },
-      { label: 'Upload & analyze PCAP',       admin: true,  analyst: true,  viewer: false },
-      { label: 'Preview data cleanup',        admin: true,  analyst: true,  viewer: false },
-    ],
-  },
-  {
-    category: 'Detection Engine',
-    items: [
-      { label: 'Start / stop detection',      admin: true,  analyst: false, viewer: false },
-      { label: 'Edit detection thresholds',   admin: true,  analyst: false, viewer: false },
-      { label: 'View detection thresholds',   admin: true,  analyst: true,  viewer: false },
-    ],
-  },
-  {
-    category: 'Administration',
-    items: [
-      { label: 'Ingest alerts via API',       admin: true,  analyst: false, viewer: false },
-      { label: 'Run data cleanup',            admin: true,  analyst: false, viewer: false },
-      { label: 'Delete reports',              admin: true,  analyst: false, viewer: false },
-      { label: 'Manage users',                admin: true,  analyst: false, viewer: false },
-      { label: 'Register new users',          admin: true,  analyst: false, viewer: false },
-    ],
-  },
-];
-
-const ROLES = [
-  { key: 'admin',   label: 'Admin',   color: 'text-red-400',   bg: 'bg-red-500/10'   },
-  { key: 'analyst', label: 'Analyst', color: 'text-amber-400', bg: 'bg-amber-500/10' },
-  { key: 'viewer',  label: 'Viewer',  color: 'text-slate-300', bg: 'bg-slate-700/40' },
-] as const;
-
-function RolesPermissionsCard() {
-  return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 lg:col-span-2">
-      <div className="mb-5 flex items-center gap-3">
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-400/10 text-cyan-400 ring-1 ring-cyan-400/20">
-          <KeyRound className="h-4 w-4" />
-        </span>
-        <div>
-          <h2 className="text-base font-semibold text-white">Roles &amp; Permissions</h2>
-          <p className="text-xs text-slate-500">What each role is allowed to do in the system</p>
-        </div>
-      </div>
-
-      <div className="overflow-hidden rounded-lg border border-slate-800">
-        <table className="w-full border-collapse text-sm">
-          <thead className="bg-slate-900/80">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 w-1/2">
-                Permission
-              </th>
-              {ROLES.map((r) => (
-                <th key={r.key} className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider">
-                  <span className={`inline-block rounded px-2 py-0.5 text-xs font-semibold ring-1 ${r.color} ${r.bg} ${
-                    r.key === 'admin'   ? 'ring-red-500/30'   :
-                    r.key === 'analyst' ? 'ring-amber-500/30' : 'ring-slate-600/40'
-                  }`}>
-                    {r.label}
-                  </span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-            {PERMISSIONS.map((group) => (
-              <>
-                {/* Category header row */}
-                <tr key={group.category} className="bg-slate-800/30">
-                  <td
-                    colSpan={4}
-                    className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500"
-                  >
-                    {group.category}
-                  </td>
-                </tr>
-                {/* Permission rows */}
-                {group.items.map((item) => (
-                  <tr key={item.label} className="hover:bg-slate-800/20 transition-colors">
-                    <td className="px-4 py-2.5 text-sm text-slate-300">{item.label}</td>
-                    {ROLES.map((r) => {
-                      const allowed = item[r.key as keyof typeof item] as boolean;
-                      return (
-                        <td key={r.key} className="px-4 py-2.5 text-center">
-                          {allowed ? (
-                            <CheckCircle className="inline h-4 w-4 text-emerald-400" />
-                          ) : (
-                            <XCircle className="inline h-4 w-4 text-slate-700" />
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
 export function AdminPage() {
   const { isAdmin } = useAuth();
 
@@ -1196,7 +1075,6 @@ export function AdminPage() {
         <TestAlertCard />
         {isAdmin && <RegisterUserCard />}
         {isAdmin && <UserManagementCard />}
-        <RolesPermissionsCard />
       </div>
     </div>
   );
