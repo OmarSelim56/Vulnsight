@@ -9,6 +9,7 @@ import { AlertsPage } from './pages/AlertsPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { AdminPage } from './pages/AdminPage';
 import { LiveTrafficPage } from './pages/LiveTrafficPage';
+import { ModelPage } from './pages/ModelPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,6 +31,7 @@ export default function App() {
                 <Route path="alerts" element={<AlertsPage />} />
                 <Route path="live" element={<LiveTrafficPage />} />
                 <Route path="reports" element={<ReportsPage />} />
+                <Route path="model" element={<ModelPage />} />
                 <Route path="settings" element={<AdminPage />} />
               </Route>
             </Route>

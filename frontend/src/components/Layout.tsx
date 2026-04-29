@@ -2,6 +2,7 @@ import {
   Activity,
   Bell,
   BarChart3,
+  Brain,
   LayoutDashboard,
   LogOut,
   Radio,
@@ -28,6 +29,7 @@ const NAV = [
   { to: '/alerts', label: 'Alerts', icon: Bell },
   { to: '/live', label: 'Live Traffic', icon: Radio },
   { to: '/reports', label: 'Reports', icon: BarChart3 },
+  { to: '/model', label: 'Model', icon: Brain },
   { to: '/settings', label: 'Settings', icon: Settings, adminOnly: true },
 ];
 
