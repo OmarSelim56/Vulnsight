@@ -23,7 +23,6 @@ export function AlertTable({ alerts, compact = false }: Props) {
   const [filterSeverity, setFilterSeverity] = useState('');
   const [filterMalicious, setFilterMalicious] = useState<'' | 'true' | 'false'>('');
   const [selected, setSelected] = useState<Alert | null>(null);
-  const hasSensors = useMemo(() => alerts.some((a) => a.sensor_id), [alerts]);
 
   const handleSort = (key: SortKey) => {
     if (key === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -102,14 +101,13 @@ export function AlertTable({ alerts, compact = false }: Props) {
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Destination IP</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Label</th>
                 <Th label="Confidence" k="confidence" />
-                {hasSensors && <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Sensor</th>}
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
               {sorted.length === 0 && (
                 <tr>
-                  <td colSpan={hasSensors ? 9 : 8} className="py-12 text-center text-slate-500">No alerts found</td>
+                  <td colSpan={8} className="py-12 text-center text-slate-500">No alerts found</td>
                 </tr>
               )}
               {sorted.map((alert, i) => (
@@ -148,13 +146,6 @@ export function AlertTable({ alerts, compact = false }: Props) {
                       <span className="text-xs text-slate-400">{(alert.confidence * 100).toFixed(1)}%</span>
                     </div>
                   </td>
-                  {hasSensors && (
-                    <td className="px-4 py-3">
-                      {alert.sensor_id
-                        ? <span className="rounded bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-400 ring-1 ring-cyan-500/20">{alert.sensor_id}</span>
-                        : <span className="text-xs text-slate-600">—</span>}
-                    </td>
-                  )}
                   <td className="px-4 py-3 text-xs text-slate-500">{alert.triage_action.replace(/_/g, ' ')}</td>
                 </tr>
               ))}

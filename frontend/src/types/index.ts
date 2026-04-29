@@ -20,7 +20,6 @@ export interface Alert {
   attack_type?: string | null;
   dedup_count?: number;
   shap_top_features: ShapInsight[];
-  sensor_id?: string | null;
 }
 
 export interface Report {
@@ -119,18 +118,6 @@ export interface UserRecord {
   is_active: boolean;
   created_at: string;
   roles: string[];
-}
-
-export interface SensorKey {
-  id: number;
-  name: string;
-  key_prefix: string;
-  is_active: boolean;
-  created_at: string;
-  last_seen_at: string | null;
-  alerts_sent: number;
-  /** Only present immediately after creation — never returned again */
-  raw_key?: string;
 }
 
 export interface PcapJob {

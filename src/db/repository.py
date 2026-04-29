@@ -37,15 +37,14 @@ class AlertRepository:
     def save_alert(self, alert: AlertPayload):
         payload = self._to_payload_dict(alert)
         attack_type = payload.get("attack_type") or "unknown"
-        sensor_id = payload.get("sensor_id")
         with self._lock:
             with self._connect() as conn:
                 conn.execute(
                     """
                     INSERT INTO alerts (
                         timestamp, source_ip, destination_ip, severity,
-                        is_malicious, payload_json, attack_type, sensor_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        is_malicious, payload_json, attack_type
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         payload["timestamp"],
@@ -55,7 +54,6 @@ class AlertRepository:
                         1 if payload["is_malicious"] else 0,
                         json.dumps(payload),
                         attack_type,
-                        sensor_id,
                     ),
                 )
                 conn.commit()
@@ -117,8 +115,8 @@ class AlertRepository:
                         INSERT INTO alerts (
                             timestamp, source_ip, destination_ip, severity,
                             is_malicious, payload_json, attack_type,
-                            dedup_key, last_seen_at, sensor_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            dedup_key, last_seen_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             payload["timestamp"],
@@ -130,7 +128,6 @@ class AlertRepository:
                             attack_type,
                             dk,
                             now_iso,
-                            payload.get("sensor_id"),
                         ),
                     )
                     conn.commit()
@@ -520,105 +517,3 @@ class AlertRepository:
                 conn.commit()
                 return cur.rowcount > 0
 
-    # ------------------------------------------------------------------
-    # Sensor API key management
-    # ------------------------------------------------------------------
-
-    def create_sensor_key(self, name: str) -> Dict[str, Any]:
-        """
-        Generate a new sensor API key.
-        The raw key is returned ONCE — only its SHA-256 hash is stored.
-        """
-        import os
-        raw_key = "vs_" + os.urandom(32).hex()          # vs_ + 64 hex chars
-        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-        key_prefix = raw_key[:12]                        # "vs_a3f4b2c1d2" shown in UI
-        now_iso = datetime.now(timezone.utc).isoformat()
-        with self._lock:
-            with self._connect() as conn:
-                try:
-                    cur = conn.execute(
-                        """
-                        INSERT INTO sensor_keys (name, key_hash, key_prefix, created_at)
-                        VALUES (?, ?, ?, ?)
-                        """,
-                        (name, key_hash, key_prefix, now_iso),
-                    )
-                    conn.commit()
-                    record = {
-                        "id": cur.lastrowid,
-                        "name": name,
-                        "key_prefix": key_prefix,
-                        "is_active": True,
-                        "created_at": now_iso,
-                        "last_seen_at": None,
-                        "alerts_sent": 0,
-                    }
-                    return raw_key, record
-                except sqlite3.IntegrityError:
-                    raise ValueError(f"A sensor named '{name}' already exists")
-
-    def list_sensor_keys(self) -> List[Dict[str, Any]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT id, name, key_prefix, is_active, created_at, last_seen_at, alerts_sent
-                FROM sensor_keys
-                ORDER BY created_at DESC
-                """
-            ).fetchall()
-        return [dict(r) for r in rows]
-
-    def validate_sensor_key(self, raw_key: str) -> Optional[Dict[str, Any]]:
-        """Return sensor record if key is valid and active, else None."""
-        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT id, name FROM sensor_keys WHERE key_hash = ? AND is_active = 1",
-                (key_hash,),
-            ).fetchone()
-        return dict(row) if row else None
-
-    def update_sensor_stats(self, sensor_id: int) -> None:
-        """Update last_seen_at and increment alerts_sent counter."""
-        now_iso = datetime.now(timezone.utc).isoformat()
-        with self._lock:
-            with self._connect() as conn:
-                conn.execute(
-                    """
-                    UPDATE sensor_keys
-                    SET last_seen_at = ?, alerts_sent = alerts_sent + 1
-                    WHERE id = ?
-                    """,
-                    (now_iso, sensor_id),
-                )
-                conn.commit()
-
-    def revoke_sensor_key(self, sensor_id: int) -> bool:
-        """Deactivate a sensor key (set is_active = 0)."""
-        with self._lock:
-            with self._connect() as conn:
-                cur = conn.execute(
-                    "UPDATE sensor_keys SET is_active = 0 WHERE id = ?", (sensor_id,)
-                )
-                conn.commit()
-                return cur.rowcount > 0
-
-    def activate_sensor_key(self, sensor_id: int) -> bool:
-        """Re-activate a previously revoked sensor key (set is_active = 1)."""
-        with self._lock:
-            with self._connect() as conn:
-                cur = conn.execute(
-                    "UPDATE sensor_keys SET is_active = 1 WHERE id = ?", (sensor_id,)
-                )
-                conn.commit()
-                return cur.rowcount > 0
-
-    def delete_sensor_key(self, sensor_id: int) -> bool:
-        with self._lock:
-            with self._connect() as conn:
-                cur = conn.execute(
-                    "DELETE FROM sensor_keys WHERE id = ?", (sensor_id,)
-                )
-                conn.commit()
-                return cur.rowcount > 0

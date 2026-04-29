@@ -5,14 +5,13 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
-  activateSensor, ApiError, createSensor, deleteUser, deleteSensor,
-  getHealth, getThresholds, ingestAlert, getPcapJob, listSensors,
-  listUsers, previewCleanup, registerUser, revokeSensor, runCleanup,
+  ApiError, deleteUser, getHealth, getThresholds, ingestAlert,
+  getPcapJob, listUsers, previewCleanup, registerUser, runCleanup,
   setThresholds, toggleUserActive, updateUserRoles, uploadPcap,
 } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useLiveAlerts } from '../components/Layout';
-import type { PcapJob, SensorKey, Thresholds, UserRecord } from '../types';
+import type { PcapJob, Thresholds, UserRecord } from '../types';
 
 const AVAILABLE_ROLES = ['admin', 'analyst', 'viewer'];
 
@@ -1177,233 +1176,6 @@ function RolesPermissionsCard() {
   );
 }
 
-// ─── Sensor Management ───────────────────────────────────────────────────────
-
-function SensorManagementCard() {
-  const queryClient = useQueryClient();
-  const [newName, setNewName] = useState('');
-  const [revealedKey, setRevealedKey] = useState<{ name: string; key: string } | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
-  const [formError, setFormError] = useState('');
-  const [creating, setCreating] = useState(false);
-
-  const { data: sensors = [], isLoading } = useQuery<SensorKey[]>({
-    queryKey: ['sensors'],
-    queryFn: listSensors,
-    refetchInterval: 30_000,
-  });
-
-  const revokeMutation = useMutation({
-    mutationFn: (id: number) => revokeSensor(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sensors'] }),
-  });
-
-  const activateMutation = useMutation({
-    mutationFn: (id: number) => activateSensor(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sensors'] }),
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: number) => deleteSensor(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sensors'] });
-      setDeleteConfirm(null);
-    },
-  });
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const name = newName.trim();
-    if (!name) return;
-    setCreating(true);
-    setFormError('');
-    setRevealedKey(null);
-    try {
-      const result = await createSensor(name);
-      setRevealedKey({ name: result.name, key: result.raw_key! });
-      setNewName('');
-      queryClient.invalidateQueries({ queryKey: ['sensors'] });
-    } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : 'Failed to create sensor key');
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 lg:col-span-2">
-      <div className="mb-5 flex items-center gap-3">
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-400/10 text-cyan-400 ring-1 ring-cyan-400/20">
-          <KeyRound className="h-4 w-4" />
-        </span>
-        <div>
-          <h2 className="text-base font-semibold text-white">Sensor API Keys</h2>
-          <p className="text-xs text-slate-500">
-            Remote sensor agents authenticate with these keys via <code className="text-cyan-400">X-Sensor-Key</code> header
-          </p>
-        </div>
-        <button
-          onClick={() => queryClient.invalidateQueries({ queryKey: ['sensors'] })}
-          className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-1.5 text-xs text-slate-400 hover:text-white transition"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
-        </button>
-      </div>
-
-      {/* Create form */}
-      <form onSubmit={handleCreate} className="mb-6 flex items-end gap-3">
-        <div className="flex-1">
-          <label className="mb-1.5 block text-xs font-medium text-slate-400">Sensor name</label>
-          <input
-            value={newName}
-            onChange={(e) => { setNewName(e.target.value); setFormError(''); }}
-            placeholder="e.g. server-01, branch-office-gw"
-            required
-            className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2.5 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-          />
-          {formError && <p className="mt-1 text-xs text-red-400">{formError}</p>}
-        </div>
-        <button
-          type="submit"
-          disabled={creating || !newName.trim()}
-          className="flex items-center gap-2 rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60 transition"
-        >
-          {creating ? 'Creating…' : 'Generate Key'}
-        </button>
-      </form>
-
-      {/* One-time key reveal */}
-      {revealedKey && (
-        <div className="mb-5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <p className="mb-1 text-sm font-semibold text-emerald-400">
-                Key created for <span className="font-bold">{revealedKey.name}</span> — copy it now, it won't be shown again
-              </p>
-              <code className="block break-all rounded bg-slate-950/60 px-3 py-2 font-mono text-xs text-emerald-300">
-                {revealedKey.key}
-              </code>
-            </div>
-            <button
-              onClick={() => { navigator.clipboard.writeText(revealedKey.key); }}
-              className="shrink-0 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-400 hover:bg-emerald-500/20 transition"
-            >
-              Copy
-            </button>
-          </div>
-          <button
-            onClick={() => setRevealedKey(null)}
-            className="mt-3 text-xs text-slate-500 hover:text-slate-300 transition"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      {/* Sensor table */}
-      {isLoading ? (
-        <div className="py-8 text-center text-sm text-slate-500">Loading sensors…</div>
-      ) : sensors.length === 0 ? (
-        <div className="rounded-lg border border-slate-800 bg-slate-950/40 py-8 text-center text-sm text-slate-500">
-          No sensor keys yet. Generate one above to connect a remote sensor.
-        </div>
-      ) : (
-        <div className="overflow-hidden rounded-lg border border-slate-800">
-          <table className="w-full border-collapse text-sm">
-            <thead className="bg-slate-900/80">
-              <tr>
-                {['Name', 'Key prefix', 'Status', 'Alerts sent', 'Last seen', 'Actions'].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-              {sensors.map((s) => (
-                <>
-                  <tr key={s.id} className="hover:bg-slate-800/30 transition-colors">
-                    <td className="px-4 py-3 font-medium text-slate-200">{s.name}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-400">{s.key_prefix}…</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${
-                        s.is_active
-                          ? 'bg-emerald-500/15 text-emerald-400 ring-emerald-500/30'
-                          : 'bg-slate-800 text-slate-500 ring-slate-700'
-                      }`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${s.is_active ? 'bg-emerald-400' : 'bg-slate-600'}`} />
-                        {s.is_active ? 'Active' : 'Revoked'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-400">{s.alerts_sent.toLocaleString()}</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">
-                      {s.last_seen_at ? new Date(s.last_seen_at).toLocaleString() : '—'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1.5">
-                        {s.is_active ? (
-                          <button
-                            onClick={() => revokeMutation.mutate(s.id)}
-                            disabled={revokeMutation.isPending}
-                            className="rounded border border-amber-500/30 px-2 py-1 text-xs text-amber-400 hover:bg-amber-500/10 disabled:opacity-50 transition"
-                          >
-                            Revoke
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => activateMutation.mutate(s.id)}
-                            disabled={activateMutation.isPending}
-                            className="rounded border border-emerald-500/30 px-2 py-1 text-xs text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50 transition"
-                          >
-                            Re-activate
-                          </button>
-                        )}
-                        <button
-                          onClick={() => setDeleteConfirm(s.id)}
-                          title="Delete sensor key"
-                          className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-400 hover:border-red-500/40 hover:text-red-400 transition"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                  {deleteConfirm === s.id && (
-                    <tr key={`${s.id}-del`} className="bg-red-950/30">
-                      <td colSpan={6} className="px-4 py-3">
-                        <div className="flex items-center gap-3 text-sm">
-                          <XCircle className="h-4 w-4 shrink-0 text-red-400" />
-                          <span className="text-red-400">
-                            Permanently delete key for <strong>{s.name}</strong>?
-                          </span>
-                          <button
-                            onClick={() => deleteMutation.mutate(s.id)}
-                            disabled={deleteMutation.isPending}
-                            className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-60"
-                          >
-                            {deleteMutation.isPending ? 'Deleting…' : 'Confirm'}
-                          </button>
-                          <button
-                            onClick={() => setDeleteConfirm(null)}
-                            className="rounded border border-slate-700 px-3 py-1 text-xs text-slate-400 hover:text-white"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function AdminPage() {
@@ -1424,7 +1196,6 @@ export function AdminPage() {
         <TestAlertCard />
         {isAdmin && <RegisterUserCard />}
         {isAdmin && <UserManagementCard />}
-        {isAdmin && <SensorManagementCard />}
         <RolesPermissionsCard />
       </div>
     </div>
