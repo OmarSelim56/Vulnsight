@@ -114,7 +114,7 @@ async def ingest_alert(
 @app.get("/api/v1/alerts", response_model=List[AlertPayload])
 def get_alerts(
     limit: int = 100,
-    _=Depends(require_roles("admin", "analyst", "viewer")),
+    _=Depends(require_roles("admin", "analyst", "client")),
 ):
     if limit <= 0:
         return []
@@ -163,7 +163,7 @@ def generate_report(_=Depends(require_roles("admin", "analyst"))):
 @app.get("/api/v1/reports/history")
 def list_reports(
     limit: int = 50,
-    _=Depends(require_roles("admin", "analyst", "viewer")),
+    _=Depends(require_roles("admin", "analyst", "client")),
 ):
     return repository.list_reports(limit=limit)
 
@@ -230,7 +230,7 @@ async def alerts_ws(websocket: WebSocket):
 @app.get("/api/v1/analytics/timeline")
 def analytics_timeline(
     hours: int = 24,
-    _=Depends(require_roles("admin", "analyst", "viewer")),
+    _=Depends(require_roles("admin", "analyst", "client")),
 ):
     return repository.get_timeline(hours=hours)
 
@@ -238,25 +238,25 @@ def analytics_timeline(
 @app.get("/api/v1/analytics/top-attackers")
 def analytics_top_attackers(
     limit: int = 10,
-    _=Depends(require_roles("admin", "analyst", "viewer")),
+    _=Depends(require_roles("admin", "analyst", "client")),
 ):
     return repository.get_top_attackers(limit=limit)
 
 
 @app.get("/api/v1/analytics/severity-breakdown")
-def analytics_severity_breakdown(_=Depends(require_roles("admin", "analyst", "viewer"))):
+def analytics_severity_breakdown(_=Depends(require_roles("admin", "analyst", "client"))):
     return repository.get_severity_breakdown()
 
 
 @app.get("/api/v1/analytics/attack-types")
-def analytics_attack_types(_=Depends(require_roles("admin", "analyst", "viewer"))):
+def analytics_attack_types(_=Depends(require_roles("admin", "analyst", "client"))):
     return repository.get_attack_type_breakdown()
 
 
 @app.get("/api/v1/analytics/top-ports")
 def analytics_top_ports(
     limit: int = 10,
-    _=Depends(require_roles("admin", "analyst", "viewer")),
+    _=Depends(require_roles("admin", "analyst", "client")),
 ):
     return repository.get_top_ports(limit=limit)
 
@@ -552,5 +552,5 @@ def detection_stop(_=Depends(require_roles("admin"))):
 
 
 @app.get("/api/v1/detection/status")
-def detection_status(_=Depends(require_roles("admin", "analyst", "viewer"))):
+def detection_status(_=Depends(require_roles("admin", "analyst", "client"))):
     return detection_manager.status()

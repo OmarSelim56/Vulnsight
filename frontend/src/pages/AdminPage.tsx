@@ -13,7 +13,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLiveAlerts } from '../components/Layout';
 import type { PcapJob, Thresholds, UserRecord } from '../types';
 
-const AVAILABLE_ROLES = ['admin', 'analyst', 'viewer'];
+const AVAILABLE_ROLES = ['admin', 'analyst', 'client'];
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 const LABELS = ['ATTACK DETECTED', 'PORT SCAN', 'DDoS ATTEMPT', 'BRUTE FORCE', 'NORMAL'];
@@ -337,7 +337,7 @@ function UserManagementCard() {
   const ROLE_COLOR: Record<string, string> = {
     admin: 'bg-red-500/15 text-red-400 ring-red-500/30',
     analyst: 'bg-amber-500/15 text-amber-400 ring-amber-500/30',
-    viewer: 'bg-slate-700 text-slate-300 ring-slate-600/40',
+    client: 'bg-slate-700 text-slate-300 ring-slate-600/40',
   };
 
   return (
@@ -726,7 +726,7 @@ function TestAlertCard() {
 function RegisterUserCard() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [selectedRoles, setSelectedRoles] = useState<string[]>(['viewer']);
+  const [selectedRoles, setSelectedRoles] = useState<string[]>(['client']);
   const [success, setSuccess] = useState('');
   const queryClient = useQueryClient();
 
@@ -736,7 +736,7 @@ function RegisterUserCard() {
       setSuccess(`User "${user.username}" created with roles: ${user.roles.join(', ')}`);
       setUsername('');
       setPassword('');
-      setSelectedRoles(['viewer']);
+      setSelectedRoles(['client']);
       queryClient.invalidateQueries({ queryKey: ['users'] });
     },
   });

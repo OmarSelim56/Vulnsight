@@ -87,11 +87,11 @@ def analyst_headers(client, auth_repo, admin_headers):
 
 
 @pytest.fixture()
-def viewer_headers(client, auth_repo, admin_headers):
-    auth_repo.create_user("viewer_user", "Viewer@pass1", ["viewer"])
+def client_headers(client, auth_repo, admin_headers):
+    auth_repo.create_user("client_user", "Viewer@pass1", ["client"])
     resp = client.post(
         "/api/v1/auth/login",
-        json={"username": "viewer_user", "password": "Viewer@pass1"},
+        json={"username": "client_user", "password": "Viewer@pass1"},
     )
     assert resp.status_code == 200
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}

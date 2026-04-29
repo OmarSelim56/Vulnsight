@@ -81,7 +81,7 @@ class TestAuthRepository:
         assert user["is_active"] == 1
 
     def test_get_user_by_id(self, auth_repo):
-        uid = auth_repo.create_user("carol", "CarolPass1", ["viewer"])
+        uid = auth_repo.create_user("carol", "CarolPass1", ["client"])
         user = auth_repo.get_user_by_id(uid)
         assert user["username"] == "carol"
 
@@ -92,9 +92,9 @@ class TestAuthRepository:
         assert auth_repo.get_user_by_username("ghost") is None
 
     def test_get_user_roles(self, auth_repo):
-        uid = auth_repo.create_user("dave", "DavePass1", ["analyst", "viewer"])
+        uid = auth_repo.create_user("dave", "DavePass1", ["analyst", "client"])
         roles = auth_repo.get_user_roles(uid)
-        assert set(roles) == {"analyst", "viewer"}
+        assert set(roles) == {"analyst", "client"}
 
     def test_roles_are_lowercased(self, auth_repo):
         uid = auth_repo.create_user("eve", "EvePass1", ["ADMIN", "Analyst"])
@@ -110,12 +110,12 @@ class TestAuthRepository:
         assert user is not None
 
     def test_duplicate_username_raises(self, auth_repo):
-        auth_repo.create_user("unique", "Pass1234", ["viewer"])
+        auth_repo.create_user("unique", "Pass1234", ["client"])
         with pytest.raises(Exception):
             auth_repo.create_user("unique", "OtherPass", ["analyst"])
 
     def test_password_stored_as_hash(self, auth_repo):
-        auth_repo.create_user("frank", "PlainText", ["viewer"])
+        auth_repo.create_user("frank", "PlainText", ["client"])
         user = auth_repo.get_user_by_username("frank")
         assert user["password_hash"] != "PlainText"
         assert verify_password("PlainText", user["password_hash"])

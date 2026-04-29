@@ -98,31 +98,31 @@ class TestRegister:
     def test_register_new_user_as_admin(self, client, admin_headers):
         resp = client.post(
             "/api/v1/auth/register",
-            json={"username": "newuser", "password": "NewPass123", "roles": ["viewer"]},
+            json={"username": "newuser", "password": "NewPass123", "roles": ["client"]},
             headers=admin_headers,
         )
         assert resp.status_code == 200
         body = resp.json()
         assert body["username"] == "newuser"
-        assert "viewer" in body["roles"]
+        assert "client" in body["roles"]
 
-    def test_register_requires_admin_role(self, client, viewer_headers):
+    def test_register_requires_admin_role(self, client, client_headers):
         resp = client.post(
             "/api/v1/auth/register",
             json={"username": "hacker", "password": "Hack1234", "roles": ["admin"]},
-            headers=viewer_headers,
+            headers=client_headers,
         )
         assert resp.status_code == 403
 
     def test_register_without_auth_returns_401(self, client):
         resp = client.post(
             "/api/v1/auth/register",
-            json={"username": "anon", "password": "Anon1234", "roles": ["viewer"]},
+            json={"username": "anon", "password": "Anon1234", "roles": ["client"]},
         )
         assert resp.status_code == 401
 
     def test_register_duplicate_username_returns_409(self, client, admin_headers):
-        payload = {"username": "duplicate", "password": "Pass1234", "roles": ["viewer"]}
+        payload = {"username": "duplicate", "password": "Pass1234", "roles": ["client"]}
         client.post("/api/v1/auth/register", json=payload, headers=admin_headers)
         resp = client.post("/api/v1/auth/register", json=payload, headers=admin_headers)
         assert resp.status_code == 409
@@ -130,7 +130,7 @@ class TestRegister:
     def test_registered_user_can_login(self, client, admin_headers):
         client.post(
             "/api/v1/auth/register",
-            json={"username": "logintest", "password": "LoginPass1", "roles": ["viewer"]},
+            json={"username": "logintest", "password": "LoginPass1", "roles": ["client"]},
             headers=admin_headers,
         )
         resp = client.post(
@@ -161,8 +161,8 @@ class TestIngestAlert:
         resp = client.post("/api/v1/alerts", json=SAMPLE_ALERT, headers=headers)
         assert resp.status_code == 403
 
-    def test_ingest_alert_viewer_forbidden(self, client, viewer_headers):
-        resp = client.post("/api/v1/alerts", json=SAMPLE_ALERT, headers=viewer_headers)
+    def test_ingest_alert_client_forbidden(self, client, client_headers):
+        resp = client.post("/api/v1/alerts", json=SAMPLE_ALERT, headers=client_headers)
         assert resp.status_code == 403
 
     def test_ingest_alert_no_auth(self, client):
@@ -195,8 +195,8 @@ class TestGetAlerts:
         resp = client.get("/api/v1/alerts", headers=analyst_headers)
         assert resp.status_code == 200
 
-    def test_get_alerts_as_viewer(self, client, viewer_headers):
-        resp = client.get("/api/v1/alerts", headers=viewer_headers)
+    def test_get_alerts_as_client(self, client, client_headers):
+        resp = client.get("/api/v1/alerts", headers=client_headers)
         assert resp.status_code == 200
 
     def test_get_alerts_no_auth(self, client):
@@ -254,8 +254,8 @@ class TestReports:
                     "malicious_ratio", "severity_breakdown", "top_targets"):
             assert key in body
 
-    def test_generate_report_viewer_forbidden(self, client, viewer_headers):
-        resp = client.post("/api/v1/reports/generate", headers=viewer_headers)
+    def test_generate_report_client_forbidden(self, client, client_headers):
+        resp = client.post("/api/v1/reports/generate", headers=client_headers)
         assert resp.status_code == 403
 
     def test_generate_report_no_auth(self, client):
@@ -279,8 +279,8 @@ class TestImportFlows:
         assert body["imported"] == 0
         assert "counts" in body
 
-    def test_import_flows_requires_admin_or_analyst(self, client, viewer_headers):
-        resp = client.post("/api/v1/admin/import-flows", headers=viewer_headers)
+    def test_import_flows_requires_admin_or_analyst(self, client, client_headers):
+        resp = client.post("/api/v1/admin/import-flows", headers=client_headers)
         assert resp.status_code == 403
 
     def test_import_flows_no_auth(self, client):
