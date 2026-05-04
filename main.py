@@ -1,16 +1,14 @@
 """
 VulnSight — single entry point
 ================================
-Starts all three services in parallel:
-  1. FastAPI backend     (http://localhost:8000)
-  2. Vite dev server     (http://localhost:5173)   ← frontend
-  3. Detection engine    (live traffic → model → API)
+Starts two services in parallel:
+  1. FastAPI backend   (http://localhost:8000)
+  2. Vite dev server   (http://localhost:5173)
 
 Usage
 -----
-    python main.py              # full stack (API + frontend + detection)
-    python main.py --api-only   # API only (no frontend, no detection)
-    python main.py --no-detect  # API + frontend, skip detection engine
+    python main.py              # API + frontend
+    python main.py --api-only   # API only (no frontend)
 """
 
 import argparse
@@ -18,12 +16,9 @@ import subprocess
 import sys
 import threading
 import time
-import warnings
 from pathlib import Path
 
 import uvicorn
-
-warnings.filterwarnings("ignore", category=UserWarning)
 
 _ROOT = Path(__file__).parent
 
@@ -85,7 +80,7 @@ def run_api():
     )
 
 
-# ── 2. Vite dev server ───────────────────────────────────────────────────────
+# ── 2. Vite dev server ──────────────────────────────────────────────────────
 
 def run_frontend():
     frontend_dir = _ROOT / "frontend"
@@ -115,61 +110,12 @@ def run_frontend():
     proc.wait()
 
 
-# ── 3. Detection engine ──────────────────────────────────────────────────────
-
-def run_detection():
-    from src.detection.engine import InferenceEngine
-    from src.detection.collector import TrafficCollector
-    from src.api.client import DashboardReporter
-    from src.core.settings import settings
-
-    # give the API a moment to finish starting
-    time.sleep(3)
-
-    log("DETECT", GR, "Loading model …")
-    try:
-        engine = InferenceEngine(
-            model_path=str(_ROOT / "model" / "vulnsight_cnn_bilstm.pth"),
-            scaler_path=str(_ROOT / "model" / "scaler.pkl"),
-            use_shap=True,
-        )
-    except Exception as e:
-        log("DETECT", RD, f"Model load failed: {e}")
-        return
-
-    try:
-        collector = TrafficCollector()
-    except Exception as e:
-        log("DETECT", RD, f"Interface error: {e}  (try running as Administrator)")
-        return
-
-    reporter  = DashboardReporter(base_url=settings.api_base_url)
-    log("DETECT", GR, "Engine live — monitoring network traffic")
-
-    for features, metadata in collector.get_flows():
-        prediction, confidence = engine.process_flow(features)
-        if prediction is None:
-            continue
-
-        shap_top = []
-        if prediction == 1:
-            shap_top = engine.explain_latest_window(top_k=5)
-
-        reporter.post_alert(
-            metadata=metadata,
-            prediction=prediction,
-            confidence=confidence,
-            shap_top_features=shap_top,
-        )
-
-
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Entry point ──────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="VulnSight NIDS launcher")
-    parser.add_argument("--api-only",   action="store_true", help="Start API server only")
-    parser.add_argument("--no-detect",  action="store_true", help="Skip the live detection engine")
-    parser.add_argument("--no-frontend",action="store_true", help="Skip the Vite dev server")
+    parser.add_argument("--api-only",    action="store_true", help="Start API server only")
+    parser.add_argument("--no-frontend", action="store_true", help="Skip the Vite dev server")
     args = parser.parse_args()
 
     banner()
@@ -190,11 +136,6 @@ def main():
         fe_thread.start()
         threads.append(fe_thread)
 
-    if not args.api_only and not args.no_detect:
-        det_thread = threading.Thread(target=run_detection, daemon=True, name="detection")
-        det_thread.start()
-        threads.append(det_thread)
-
     # ── ready banner ─────────────────────────────────────────────────────────
     time.sleep(2)
     print(f"""
@@ -203,7 +144,8 @@ def main():
   {CY}API{R}       →  http://localhost:{settings.api_port}/api/v1
   {CY}Docs{R}      →  http://localhost:{settings.api_port}/docs
   {YL}Frontend{R}  →  http://localhost:5173
-  {DIM}Press Ctrl+C to stop all services{R}
+
+  {DIM}Press Ctrl+C to stop{R}
 """)
 
     try:
