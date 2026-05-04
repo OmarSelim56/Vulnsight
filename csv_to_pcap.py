@@ -31,6 +31,7 @@ import pandas as pd
 
 try:
     from scapy.all import wrpcap
+    from scapy.layers.l2 import Ether
     from scapy.layers.inet import IP, TCP, UDP
     from scapy.packet import Raw
 except ImportError:
@@ -216,12 +217,14 @@ def flow_to_packets(
         if is_tcp:
             flags = tcp_flags(i, n_fwd, "fwd")
             pkt = (
+                Ether() /
                 IP(src=src_ip, dst=dst_ip) /
                 TCP(sport=src_port, dport=dst_port, flags=flags) /
                 Raw(load=payload)
             )
         else:
             pkt = (
+                Ether() /
                 IP(src=src_ip, dst=dst_ip) /
                 UDP(sport=src_port, dport=dst_port) /
                 Raw(load=payload)
@@ -237,12 +240,14 @@ def flow_to_packets(
         if is_tcp:
             flags = tcp_flags(i, n_bwd, "bwd")
             pkt = (
+                Ether() /
                 IP(src=dst_ip, dst=src_ip) /
                 TCP(sport=dst_port, dport=src_port, flags=flags) /
                 Raw(load=payload)
             )
         else:
             pkt = (
+                Ether() /
                 IP(src=dst_ip, dst=src_ip) /
                 UDP(sport=dst_port, dport=src_port) /
                 Raw(load=payload)
