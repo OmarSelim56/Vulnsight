@@ -10,3 +10,6 @@ scikit-learn
 shap
 torch
 uvicorn[standard]
+pytest
+pytest-asyncio
+httpx
