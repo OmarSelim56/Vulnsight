@@ -60,7 +60,7 @@ class InferenceEngine:
         # Final shape: (1, 10, 20)
         current_window = np.array(list(self.flow_buffer), dtype=np.float32)
         self.background_windows.append(current_window.flatten())
-        input_tensor = torch.tensor([current_window], dtype=torch.float32).to(self.device)
+        input_tensor = torch.from_numpy(np.array([current_window], dtype=np.float32)).to(self.device)
 
         # F. Perform Prediction
         with torch.no_grad():
