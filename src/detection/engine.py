@@ -26,7 +26,6 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-import pandas as pd
 import torch
 
 from src.core.feature_config import FEATURE_NAMES
@@ -101,9 +100,12 @@ class InferenceEngine:
                          high values indicate a strong, trustworthy decision
             (None, 0.0) is returned during the 10-flow warm-up window.
         """
-        # A. Wrap features so the scaler sees the column names it was fitted with.
-        features_df     = pd.DataFrame([raw_features], columns=FEATURE_NAMES)
-        scaled_features = self.scaler.transform(features_df)[0]
+        # A. Scale the raw features.
+        #    The scaler was fitted on a plain numpy array (no feature names),
+        #    so we pass a numpy array here too to avoid sklearn's feature-name
+        #    mismatch warning.
+        features_array  = np.asarray([raw_features], dtype=np.float32)
+        scaled_features = self.scaler.transform(features_array)[0]
 
         # B. Append to sliding window
         self.flow_buffer.append(scaled_features)
