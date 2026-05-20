@@ -86,10 +86,19 @@ def build_alert(
     dst_port: int,
     shap_features: list,
 ) -> dict:
-    severity     = SEVERITY_MAP.get(attack_type, "medium")
-    label        = LABEL_DISPLAY.get(attack_type, "INTRUSION DETECTED")
-    conf_level   = "high" if confidence >= 0.85 else "medium" if confidence >= 0.65 else "low"
-    triage       = "block_and_investigate" if is_malicious else "allow"
+    severity = SEVERITY_MAP.get(attack_type, "medium")
+    label    = LABEL_DISPLAY.get(attack_type, "INTRUSION DETECTED")
+    # Match the threshold-aware buckets in src/api/client.py
+    if is_malicious:
+        if confidence >= 0.95:
+            conf_level = "very_high"
+        elif confidence >= 0.89:
+            conf_level = "high"
+        else:
+            conf_level = "medium"
+    else:
+        conf_level = "high" if confidence >= 0.85 else "medium" if confidence >= 0.70 else "low"
+    triage = "block_and_investigate" if is_malicious else "allow"
 
     return {
         "timestamp":        datetime.now(timezone.utc).isoformat(),
