@@ -4,7 +4,7 @@ __pycache__/
 *.pyo
 
 # Local datasets and generated artifacts
-dataset/*.csv
+dataset/raw/
 dataset/processed/
 *.db
 

@@ -1,15 +1,18 @@
 """
-train.py — Train the CNN-BiLSTM model on preprocessed windowed data.
+train.py — Train the CNN-BiLSTM model from the processed 21-column CSVs.
 
 What it does
 ------------
-1. Loads X_train / y_train / X_val / y_val from dataset/processed/
-2. Computes class weights to handle the BENIGN / ATTACK imbalance
-3. Trains with weighted CrossEntropyLoss + Adam + ReduceLROnPlateau
-4. Saves the best checkpoint (lowest val loss) to model/vulnsight_cnn_bilstm.pth
-5. Evaluates on X_test / y_test
-6. Finds the optimal decision threshold by F1 on the validation set
-7. Prints the final classification report and all key metrics
+1. Loads all CSVs from dataset/processed/  (output of preprocess.py)
+2. Builds sliding windows of 10 consecutive flows per file
+3. Stratified 70 / 15 / 15 split
+4. Fits StandardScaler on training windows ONLY → saves model/scaler.pkl
+5. Computes class weights to handle the BENIGN / ATTACK imbalance
+6. Trains with weighted CrossEntropyLoss + Adam + ReduceLROnPlateau
+7. Saves the best checkpoint (lowest val loss) to model/vulnsight_cnn_bilstm.pth
+8. Evaluates on the test set
+9. Finds the optimal decision threshold by F1 on the validation set
+10. Prints the full classification report and all key metrics
 
 Usage
 -----
@@ -24,32 +27,84 @@ from pathlib import Path
 
 import joblib
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from sklearn.metrics import classification_report, f1_score
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, TensorDataset
 
 warnings.filterwarnings("ignore")
 
+from src.core.feature_config import FEATURE_NAMES
 from src.core.model_arch import HybridCNNBiLSTM
 
-DATA_DIR   = Path("dataset/processed")
+DATA_DIR   = Path(r"C:\AAST\Vulnsight\dataset\processed")
 MODEL_PATH = Path("model/vulnsight_cnn_bilstm.pth")
+SCALER_PATH = Path("model/scaler.pkl")
+WINDOW     = 10
+
+BENIGN_LABELS = {"benign", "normal"}
+
+
+def binary_label(label: str) -> int:
+    return 0 if label.strip().lower() in BENIGN_LABELS else 1
+
+
+def make_windows(features: np.ndarray, labels: np.ndarray):
+    X, y = [], []
+    for i in range(len(features) - WINDOW + 1):
+        X.append(features[i : i + WINDOW])
+        y.append(labels[i + WINDOW - 1])
+    return np.array(X, dtype=np.float32), np.array(y, dtype=np.int64)
 
 
 def load_data():
-    print("[→] Loading preprocessed data …")
-    X_train = np.load(DATA_DIR / "X_train.npy")
-    y_train = np.load(DATA_DIR / "y_train.npy")
-    X_val   = np.load(DATA_DIR / "X_val.npy")
-    y_val   = np.load(DATA_DIR / "y_val.npy")
-    X_test  = np.load(DATA_DIR / "X_test.npy")
-    y_test  = np.load(DATA_DIR / "y_test.npy")
-    print(f"    train={len(X_train):,}  val={len(X_val):,}  test={len(X_test):,}")
-    print(f"    attack ratio  train={y_train.mean()*100:.1f}%  val={y_val.mean()*100:.1f}%  test={y_test.mean()*100:.1f}%\n")
-    return X_train, y_train, X_val, y_val, X_test, y_test
+    csv_files = sorted(DATA_DIR.glob("*.csv"))
+    if not csv_files:
+        raise FileNotFoundError(f"No CSVs in {DATA_DIR}. Run: python preprocess.py")
+
+    print(f"[→] Loading {len(csv_files)} processed CSVs from {DATA_DIR} …")
+
+    all_X, all_y = [], []
+    for path in csv_files:
+        df = pd.read_csv(path, low_memory=False)
+        df.columns = df.columns.str.strip()
+        df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=FEATURE_NAMES)
+
+        features = df[FEATURE_NAMES].values.astype(np.float32)
+        labels   = df["Label"].apply(binary_label).values.astype(np.int64)
+
+        X, y = make_windows(features, labels)
+        all_X.append(X)
+        all_y.append(y)
+        print(f"    {path.name:<55}  windows={len(X):,}  attack%={labels.mean()*100:.1f}%")
+
+    X = np.concatenate(all_X)
+    y = np.concatenate(all_y)
+
+    # stratified split 70 / 15 / 15
+    X_train, X_tmp, y_train, y_tmp = train_test_split(X, y, test_size=0.30, stratify=y, random_state=42)
+    X_val, X_test, y_val, y_test   = train_test_split(X_tmp, y_tmp, test_size=0.50, stratify=y_tmp, random_state=42)
+
+    print(f"\n    Total windows : {len(X):,}")
+    print(f"    Split  →  train={len(X_train):,}  val={len(X_val):,}  test={len(X_test):,}")
+
+    # fit scaler on train ONLY
+    n_feat  = len(FEATURE_NAMES)
+    scaler  = StandardScaler()
+    scaler.fit(X_train.reshape(-1, n_feat))
+    joblib.dump(scaler, SCALER_PATH)
+    print(f"    Scaler saved → {SCALER_PATH}\n")
+
+    def scale(arr):
+        n, w, f = arr.shape
+        return scaler.transform(arr.reshape(-1, f)).reshape(n, w, f).astype(np.float32)
+
+    return scale(X_train), y_train, scale(X_val), y_val, scale(X_test), y_test
 
 
 def make_loader(X, y, batch_size, shuffle):
