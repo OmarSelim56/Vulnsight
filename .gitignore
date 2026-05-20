@@ -4,7 +4,8 @@ __pycache__/
 *.pyo
 
 # Local datasets and generated artifacts
-dataset/
+dataset/*.csv
+dataset/processed/
 *.db
 
 # Runtime upload directory
