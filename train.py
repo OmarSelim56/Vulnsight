@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from torch.amp import GradScaler, autocast
 from sklearn.metrics import classification_report, f1_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -107,19 +108,32 @@ def load_data():
     return scale(X_train), y_train, scale(X_val), y_val, scale(X_test), y_test
 
 
-def make_loader(X, y, batch_size, shuffle):
+def make_loader(X, y, batch_size, shuffle, pin_memory=False):
     X_t = torch.tensor(X, dtype=torch.float32)
     y_t = torch.tensor(y, dtype=torch.long)
-    return DataLoader(TensorDataset(X_t, y_t), batch_size=batch_size, shuffle=shuffle, num_workers=0)
+    return DataLoader(
+        TensorDataset(X_t, y_t),
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=0,          # keep 0 on Windows to avoid multiprocessing issues
+        pin_memory=pin_memory,  # pre-pin CPU tensors for faster GPU transfer
+        persistent_workers=False,
+    )
 
 
 def find_best_threshold(model, val_loader, device):
     """Find threshold that maximises F1 on the validation set."""
+    cuda = device.type == "cuda"
     model.eval()
     probs_all, labels_all = [], []
     with torch.no_grad():
         for X_b, y_b in val_loader:
-            out   = model(X_b.to(device))
+            X_b = X_b.to(device, non_blocking=True)
+            if cuda:
+                with autocast(device_type="cuda"):
+                    out = model(X_b)
+            else:
+                out = model(X_b)
             probs = torch.softmax(out, dim=1)[:, 1].cpu().numpy()
             probs_all.extend(probs)
             labels_all.extend(y_b.numpy())
@@ -138,11 +152,17 @@ def find_best_threshold(model, val_loader, device):
 
 
 def evaluate(model, loader, device, threshold=0.5):
+    cuda = device.type == "cuda"
     model.eval()
     probs_all, labels_all = [], []
     with torch.no_grad():
         for X_b, y_b in loader:
-            out   = model(X_b.to(device))
+            X_b = X_b.to(device, non_blocking=True)
+            if cuda:
+                with autocast(device_type="cuda"):
+                    out = model(X_b)
+            else:
+                out = model(X_b)
             probs = torch.softmax(out, dim=1)[:, 1].cpu().numpy()
             probs_all.extend(probs)
             labels_all.extend(y_b.numpy())
@@ -156,21 +176,35 @@ def evaluate(model, loader, device, threshold=0.5):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--epochs",   type=int,   default=100,  help="Max epochs (default 100)")
-    parser.add_argument("--batch",    type=int,   default=128,  help="Batch size (default 128)")
+    parser.add_argument("--batch",    type=int,   default=512,  help="Batch size (default 512 for GPU)")
     parser.add_argument("--lr",       type=float, default=1e-3, help="Initial learning rate (default 0.001)")
     parser.add_argument("--patience", type=int,   default=10,   help="Early stopping patience (default 10)")
     args = parser.parse_args()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    cuda_available = torch.cuda.is_available()
+    device = torch.device("cuda" if cuda_available else "cpu")
 
-    print(f"\n{'='*55}")
+    # GPU speed-ups
+    if cuda_available:
+        torch.backends.cudnn.benchmark = True   # auto-tune cuDNN kernels for fixed input sizes
+
+    print(f"\n{'='*60}")
     print(f"  VulnSight Trainer")
-    print(f"{'='*55}")
-    print(f"  Device  : {device}")
-    print(f"  Epochs  : {args.epochs} (+ early stopping patience={args.patience})")
-    print(f"  Batch   : {args.batch}")
-    print(f"  LR      : {args.lr}")
-    print(f"{'='*55}\n")
+    print(f"{'='*60}")
+    print(f"  Device   : {device}", end="")
+    if cuda_available:
+        props = torch.cuda.get_device_properties(0)
+        vram  = props.total_memory / 1024**3
+        print(f"  ({props.name}, {vram:.1f} GB VRAM)")
+        print(f"  AMP      : enabled  (float16 compute)")
+        print(f"  cuDNN    : benchmark mode enabled")
+    else:
+        print()
+        print(f"  AMP      : disabled  (CPU training)")
+    print(f"  Epochs   : {args.epochs}  (early stopping patience={args.patience})")
+    print(f"  Batch    : {args.batch}")
+    print(f"  LR       : {args.lr}")
+    print(f"{'='*60}\n")
 
     if not DATA_DIR.exists():
         raise FileNotFoundError(f"{DATA_DIR} not found. Run:  python preprocess.py  first.")
@@ -182,34 +216,47 @@ def main():
     w_tensor  = torch.tensor(weights, dtype=torch.float32).to(device)
     print(f"[→] Class weights  benign={weights[0]:.3f}  attack={weights[1]:.3f}\n")
 
-    train_loader = make_loader(X_train, y_train, args.batch, shuffle=True)
-    val_loader   = make_loader(X_val,   y_val,   args.batch, shuffle=False)
-    test_loader  = make_loader(X_test,  y_test,  args.batch, shuffle=False)
+    pin = cuda_available   # pin_memory only useful with CUDA
+    train_loader = make_loader(X_train, y_train, args.batch, shuffle=True,  pin_memory=pin)
+    val_loader   = make_loader(X_val,   y_val,   args.batch, shuffle=False, pin_memory=pin)
+    test_loader  = make_loader(X_test,  y_test,  args.batch, shuffle=False, pin_memory=pin)
 
     model     = HybridCNNBiLSTM(feature_size=20, num_classes=2).to(device)
     criterion = nn.CrossEntropyLoss(weight=w_tensor)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = ReduceLROnPlateau(optimizer, mode="min", patience=5, factor=0.5, verbose=False)
+    scheduler = ReduceLROnPlateau(optimizer, mode="min", patience=5, factor=0.5)
+    scaler    = GradScaler(device="cuda") if cuda_available else None  # AMP gradient scaler
 
     best_val_loss  = float("inf")
     patience_count = 0
-    history        = []
 
-    print(f"{'Epoch':>6}  {'Train Loss':>10}  {'Val Loss':>9}  {'Val F1':>7}  {'LR':>8}")
-    print("-" * 50)
+    print(f"{'Epoch':>6}  {'Train Loss':>10}  {'Val Loss':>9}  {'Val F1':>7}  {'LR':>8}  {'Time':>6}")
+    print("-" * 58)
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
 
-        # ── train ────────────────────────────────────────────────────────────
+        # ── train (with AMP on GPU) ───────────────────────────────────────────
         model.train()
         train_loss = 0.0
         for X_b, y_b in train_loader:
+            X_b = X_b.to(device, non_blocking=True)
+            y_b = y_b.to(device, non_blocking=True)
             optimizer.zero_grad()
-            out  = model(X_b.to(device))
-            loss = criterion(out, y_b.to(device))
-            loss.backward()
-            optimizer.step()
+
+            if cuda_available:
+                with autocast(device_type="cuda"):
+                    out  = model(X_b)
+                    loss = criterion(out, y_b)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                out  = model(X_b)
+                loss = criterion(out, y_b)
+                loss.backward()
+                optimizer.step()
+
             train_loss += loss.item()
         train_loss /= len(train_loader)
 
@@ -219,23 +266,30 @@ def main():
         val_probs, val_labels = [], []
         with torch.no_grad():
             for X_b, y_b in val_loader:
-                out   = model(X_b.to(device))
-                loss  = criterion(out, y_b.to(device))
+                X_b = X_b.to(device, non_blocking=True)
+                y_b = y_b.to(device, non_blocking=True)
+                if cuda_available:
+                    with autocast(device_type="cuda"):
+                        out  = model(X_b)
+                        loss = criterion(out, y_b)
+                else:
+                    out  = model(X_b)
+                    loss = criterion(out, y_b)
                 val_loss += loss.item()
                 probs = torch.softmax(out, dim=1)[:, 1].cpu().numpy()
                 val_probs.extend(probs)
-                val_labels.extend(y_b.numpy())
+                val_labels.extend(y_b.cpu().numpy())
         val_loss /= len(val_loader)
 
         val_preds = (np.array(val_probs) >= 0.5).astype(int)
         val_f1    = f1_score(val_labels, val_preds, zero_division=0)
         lr_now    = optimizer.param_groups[0]["lr"]
+        elapsed   = time.time() - t0
 
         scheduler.step(val_loss)
-        history.append((train_loss, val_loss, val_f1))
 
         marker = " ✓" if val_loss < best_val_loss else ""
-        print(f"{epoch:>6}  {train_loss:>10.4f}  {val_loss:>9.4f}  {val_f1:>7.4f}  {lr_now:>8.2e}{marker}")
+        print(f"{epoch:>6}  {train_loss:>10.4f}  {val_loss:>9.4f}  {val_f1:>7.4f}  {lr_now:>8.2e}  {elapsed:>5.1f}s{marker}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
