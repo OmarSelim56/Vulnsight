@@ -21,6 +21,8 @@ Usage
 """
 
 import argparse
+import json
+import random
 import time
 import warnings
 from pathlib import Path
@@ -43,12 +45,44 @@ warnings.filterwarnings("ignore")
 from src.core.feature_config import FEATURE_NAMES
 from src.core.model_arch import HybridCNNBiLSTM
 
-DATA_DIR   = Path(r"C:\AAST\Vulnsight\dataset\processed")
-MODEL_PATH = Path("model/vulnsight_cnn_bilstm.pth")
+DATA_DIR    = Path(r"C:\AAST\Vulnsight\dataset\processed")
+MODEL_PATH  = Path("model/vulnsight_cnn_bilstm.pth")
 SCALER_PATH = Path("model/scaler.pkl")
-WINDOW     = 10
+CONFIG_PATH = Path("model/threshold.json")
+WINDOW      = 10
+GRAD_CLIP   = 1.0          # standard LSTM gradient clip norm
+WEIGHT_DECAY = 1e-4        # AdamW L2 regularisation
 
 BENIGN_LABELS = {"benign", "normal"}
+
+
+def set_seed(seed: int = 42):
+    """Seed every RNG so runs are reproducible."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def init_lstm_weights(lstm: nn.LSTM):
+    """
+    Recommended LSTM initialisation:
+      - Input-hidden weights : Xavier uniform
+      - Hidden-hidden weights: Orthogonal (prevents vanishing/exploding through time)
+      - Biases               : zero, except forget gate bias = 1
+                               (default-remember bias improves long-term learning)
+    """
+    for name, param in lstm.named_parameters():
+        if "weight_ih" in name:
+            nn.init.xavier_uniform_(param.data)
+        elif "weight_hh" in name:
+            nn.init.orthogonal_(param.data)
+        elif "bias" in name:
+            param.data.fill_(0)
+            n = param.size(0)
+            # PyTorch LSTM bias layout: [i, f, g, o]  → forget gate is the second quarter
+            param.data[n // 4 : n // 2].fill_(1.0)
 
 
 def binary_label(label: str) -> int:
@@ -179,7 +213,10 @@ def main():
     parser.add_argument("--batch",    type=int,   default=512,  help="Batch size (default 512 for GPU)")
     parser.add_argument("--lr",       type=float, default=1e-3, help="Initial learning rate (default 0.001)")
     parser.add_argument("--patience", type=int,   default=10,   help="Early stopping patience (default 10)")
+    parser.add_argument("--seed",     type=int,   default=42,   help="Random seed for reproducibility")
     args = parser.parse_args()
+
+    set_seed(args.seed)
 
     cuda_available = torch.cuda.is_available()
     device = torch.device("cuda" if cuda_available else "cpu")
@@ -203,7 +240,9 @@ def main():
         print(f"  AMP      : disabled  (CPU training)")
     print(f"  Epochs   : {args.epochs}  (early stopping patience={args.patience})")
     print(f"  Batch    : {args.batch}")
-    print(f"  LR       : {args.lr}")
+    print(f"  LR       : {args.lr}  (AdamW, weight_decay={WEIGHT_DECAY})")
+    print(f"  Seed     : {args.seed}")
+    print(f"  Grad clip: {GRAD_CLIP}")
     print(f"{'='*60}\n")
 
     if not DATA_DIR.exists():
@@ -221,11 +260,16 @@ def main():
     val_loader   = make_loader(X_val,   y_val,   args.batch, shuffle=False, pin_memory=pin)
     test_loader  = make_loader(X_test,  y_test,  args.batch, shuffle=False, pin_memory=pin)
 
-    model     = HybridCNNBiLSTM(feature_size=20, num_classes=2).to(device)
+    model = HybridCNNBiLSTM(feature_size=20, num_classes=2).to(device)
+    init_lstm_weights(model.lstm)   # better recurrent weight init
+
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"[→] Model parameters: {n_params:,}\n")
+
     criterion = nn.CrossEntropyLoss(weight=w_tensor)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=WEIGHT_DECAY)
     scheduler = ReduceLROnPlateau(optimizer, mode="min", patience=5, factor=0.5)
-    scaler    = GradScaler(device="cuda") if cuda_available else None  # AMP gradient scaler
+    grad_scaler = GradScaler(device="cuda") if cuda_available else None  # AMP gradient scaler
 
     best_val_loss  = float("inf")
     patience_count = 0
@@ -236,7 +280,7 @@ def main():
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
 
-        # ── train (with AMP on GPU) ───────────────────────────────────────────
+        # ── train (with AMP + gradient clipping on GPU) ──────────────────────
         model.train()
         train_loss = 0.0
         for X_b, y_b in train_loader:
@@ -248,13 +292,16 @@ def main():
                 with autocast(device_type="cuda"):
                     out  = model(X_b)
                     loss = criterion(out, y_b)
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
+                grad_scaler.scale(loss).backward()
+                grad_scaler.unscale_(optimizer)                                # unscale before clipping
+                torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)  # prevent exploding gradients
+                grad_scaler.step(optimizer)
+                grad_scaler.update()
             else:
                 out  = model(X_b)
                 loss = criterion(out, y_b)
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
                 optimizer.step()
 
             train_loss += loss.item()
@@ -319,6 +366,12 @@ def main():
     fn = int(((preds == 0) & (labels == 1)).sum())
     fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
 
+    # ── compute final metrics ─────────────────────────────────────────────────
+    accuracy  = (tp + tn) / (tp + tn + fp + fn)
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1        = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
     print(f"{'='*55}")
     print(f"  Test Set Results  (threshold = {best_t})")
     print(f"{'='*55}")
@@ -330,14 +383,40 @@ def main():
     print(f"  │ Actual Benign│  TN = {tn:<10,}  │  FP = {fp:<10,}  │")
     print(f"  │ Actual Attack│  FN = {fn:<10,}  │  TP = {tp:<10,}  │")
     print(f"  └──────────────┴───────────────────┴───────────────────┘")
-    print(f"\n  False Positive Rate : {fpr*100:.2f}%")
+    print(f"\n  Accuracy            : {accuracy*100:.2f}%")
+    print(f"  Precision           : {precision*100:.2f}%")
+    print(f"  Recall              : {recall*100:.2f}%")
+    print(f"  F1 score            : {f1*100:.2f}%")
+    print(f"  False Positive Rate : {fpr*100:.2f}%")
     print(f"  Best threshold      : {best_t}")
-    print(f"  Model saved to      : {MODEL_PATH}")
-    print(f"""
-  Next step — update engine.py:
-    Replace the argmax block with:
 
-      THRESHOLD  = {best_t}
+    # ── save metrics + threshold for the engine to pick up automatically ──────
+    config = {
+        "threshold": float(best_t),
+        "val_f1":    float(best_f1),
+        "test_metrics": {
+            "accuracy":  round(float(accuracy),  4),
+            "precision": round(float(precision), 4),
+            "recall":    round(float(recall),    4),
+            "f1":        round(float(f1),        4),
+            "fpr":       round(float(fpr),       4),
+            "tp": tp, "tn": tn, "fp": fp, "fn": fn,
+        },
+        "seed":           args.seed,
+        "trained_epochs": epoch,
+    }
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(config, f, indent=2)
+    print(f"\n  Model saved to      : {MODEL_PATH}")
+    print(f"  Threshold saved to  : {CONFIG_PATH}")
+    print(f"  Scaler saved to     : {SCALER_PATH}")
+    print(f"""
+  Next step — update engine.py to read the threshold:
+
+      import json
+      with open("model/threshold.json") as f:
+          THRESHOLD = json.load(f)["threshold"]
+
       mal_prob   = probabilities[0][1].item()
       prediction = 1 if mal_prob >= THRESHOLD else 0
       confidence = mal_prob if prediction == 1 else probabilities[0][0].item()
