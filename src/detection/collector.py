@@ -94,26 +94,39 @@ class TrafficCollector:
         )
 
         for flow in streamer:
-            # Calculate duration in seconds for rate features
+            # Duration in seconds (used for rate features) — derived from NFStream's ms field.
             duration_s = flow.bidirectional_duration_ms / 1000.0 if flow.bidirectional_duration_ms > 0 else 0.001
 
-            # THE 20 FEATURE MAPPING
+            # ── CRITICAL: unit conversion ────────────────────────────────────
+            # The model was trained on CIC-IDS CSVs where Flow Duration and IAT
+            # values are in MICROSECONDS.  NFStream returns them in MILLISECONDS,
+            # so we multiply by 1000 here to match the scale the StandardScaler
+            # was fitted on.  Without this conversion every live / pcap-upload
+            # prediction collapses to "benign" because the input space is 1000×
+            # off from what the model ever saw during training.
+            MS_TO_US     = 1000.0
+            duration_us  = flow.bidirectional_duration_ms  * MS_TO_US
+            iat_mean_us  = flow.bidirectional_mean_piat_ms * MS_TO_US
+            iat_max_us   = flow.bidirectional_max_piat_ms  * MS_TO_US
+            iat_min_us   = flow.bidirectional_min_piat_ms  * MS_TO_US
+
+            # THE 20 FEATURE MAPPING — order must match src/core/feature_config.FEATURE_NAMES
             features = [
-                flow.dst_port,                           # 1. Destination Port
-                flow.bidirectional_duration_ms,          # 2. Flow Duration (ms)
-                flow.src2dst_packets,                    # 3. Total Fwd Packets
-                flow.dst2src_packets,                    # 4. Total Backward Packets
-                flow.src2dst_bytes,                      # 5. Total Length of Fwd Packets
-                flow.dst2src_bytes,                      # 6. Total Length of Bwd Packets
-                flow.src2dst_max_ps,                     # 7. Fwd Packet Length Max
-                flow.src2dst_min_ps,                     # 8. Fwd Packet Length Min
-                flow.dst2src_max_ps,                     # 9. Bwd Packet Length Max
+                flow.dst_port,                           # 1.  Destination Port
+                duration_us,                             # 2.  Flow Duration (μs)
+                flow.src2dst_packets,                    # 3.  Total Fwd Packets
+                flow.dst2src_packets,                    # 4.  Total Backward Packets
+                flow.src2dst_bytes,                      # 5.  Total Length of Fwd Packets
+                flow.dst2src_bytes,                      # 6.  Total Length of Bwd Packets
+                flow.src2dst_max_ps,                     # 7.  Fwd Packet Length Max
+                flow.src2dst_min_ps,                     # 8.  Fwd Packet Length Min
+                flow.dst2src_max_ps,                     # 9.  Bwd Packet Length Max
                 flow.dst2src_min_ps,                     # 10. Bwd Packet Length Min
                 flow.bidirectional_bytes / duration_s,   # 11. Flow Bytes/s
                 flow.bidirectional_packets / duration_s, # 12. Flow Packets/s
-                flow.bidirectional_mean_piat_ms,         # 13. Flow IAT Mean
-                flow.bidirectional_max_piat_ms,          # 14. Flow IAT Max
-                flow.bidirectional_min_piat_ms,          # 15. Flow IAT Min
+                iat_mean_us,                             # 13. Flow IAT Mean (μs)
+                iat_max_us,                              # 14. Flow IAT Max (μs)
+                iat_min_us,                              # 15. Flow IAT Min (μs)
                 flow.src2dst_psh_packets,                # 16. Fwd PSH Flags
                 flow.dst2src_psh_packets,                # 17. Bwd PSH Flags
                 flow.src2dst_packets / duration_s,       # 18. Fwd Packets/s

@@ -422,26 +422,30 @@ def _process_pcap_background(
 
         processed = 0
         alerts_saved = 0
-        threshold = repository_ref.get_setting("malicious_confidence_min") or 0.5
         dedup_window = int(repository_ref.get_setting("dedup_window_seconds") or 60)
 
+        # Reuse the same threshold-aware buckets as src/api/client.py so PCAP
+        # upload alerts look identical to live-detection alerts.
+        from src.api.client import TRAINED_THRESHOLD
+        _midpoint = (TRAINED_THRESHOLD + 1.0) / 2.0
+
+        def _cls(p, c):
+            if p == 1:
+                if c >= 0.95:        return "very_high", "critical", "isolate_host_immediately"
+                if c >= _midpoint:   return "high",      "high",     "block_and_investigate"
+                if c >= TRAINED_THRESHOLD:
+                                     return "medium",    "medium",   "monitor_closely"
+                return "low", "low", "log_and_review"
+            return "very_high", "info", "no_action_required"
+
         for features, metadata in collector.get_flows():
+            # Engine applies the tuned threshold (0.78) internally — do not re-threshold here.
             prediction, confidence = engine.process_flow(features)
             if prediction is None:
                 continue
             processed += 1
-            if prediction == 1 and confidence < threshold:
-                prediction = 0
 
             attack_type = classify_attack_type(features, prediction == 1)
-
-            def _cls(p, c):
-                if p == 1:
-                    if c >= 0.90: return "very_high", "critical", "isolate_host_immediately"
-                    if c >= 0.75: return "high", "high", "block_and_investigate"
-                    if c >= 0.60: return "medium", "medium", "monitor_closely"
-                    return "low", "low", "log_and_review"
-                return "very_high", "info", "no_action_required"
 
             lvl, sev, action = _cls(prediction, confidence)
             alert = _AlertPayload(
