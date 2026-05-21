@@ -8,6 +8,11 @@ html, body, #root {
   height: 100%;
   margin: 0;
   padding: 0;
+  /* Match the app's dark theme so overscroll bounce / layout shifts
+     never reveal the browser's default white background. */
+  background-color: #020617;   /* tailwind slate-950 */
+  color-scheme: dark;
+  overscroll-behavior: none;   /* disables rubber-band scroll past edges */
 }
 
 body {
