@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  CheckCircle, Clock, Database, FileUp, FlaskConical,
+  CheckCircle, Clock, Database, FileUp,
   RefreshCw, Settings2, Shield, Trash2, UserPlus, Users, XCircle,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
-  ApiError, deleteUser, getHealth, getThresholds, ingestAlert,
+  ApiError, deleteUser, getHealth, getThresholds,
   getPcapJob, listUsers, previewCleanup, registerUser, runCleanup,
   setThresholds, toggleUserActive, updateUserRoles, uploadPcap,
 } from '../api/client';
@@ -16,11 +16,6 @@ import type { PcapJob, Thresholds, UserRecord } from '../types';
 const AVAILABLE_ROLES = ['admin', 'analyst', 'client'];
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
-const LABELS = ['ATTACK DETECTED', 'PORT SCAN', 'DDoS ATTEMPT', 'BRUTE FORCE', 'NORMAL'];
-
-function randomIp() {
-  return `${Math.floor(Math.random() * 223 + 1)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 254 + 1)}`;
-}
 
 // ─── System Status ───────────────────────────────────────────────────────────
 
@@ -533,193 +528,6 @@ function UserManagementCard() {
   );
 }
 
-// ─── Test Alert Injection ─────────────────────────────────────────────────────
-
-function TestAlertCard() {
-  const queryClient = useQueryClient();
-  const [severity, setSeverity] = useState('high');
-  const [label, setLabel] = useState('ATTACK DETECTED');
-  const [malicious, setMalicious] = useState(true);
-  const [srcIp, setSrcIp] = useState(randomIp());
-  const [dstIp, setDstIp] = useState(randomIp());
-  const [count, setCount] = useState(1);
-  const [success, setSuccess] = useState('');
-  const [error, setError] = useState('');
-  const [sending, setSending] = useState(false);
-
-  const buildAlert = (src: string, dst: string) => ({
-    timestamp: new Date().toISOString(),
-    source_ip: src,
-    destination_ip: dst,
-    protocol: 6,
-    interface: 'test_injection',
-    prediction: malicious ? 1 : 0,
-    label,
-    confidence: malicious ? 0.92 : 0.85,
-    confidence_level: malicious ? 'high' : 'medium',
-    severity,
-    triage_action: malicious ? 'investigate_now' : 'no_action_needed',
-    is_malicious: malicious,
-    shap_top_features: malicious
-      ? [
-          { feature: 'Flow Bytes/s', impact: 0.42, direction: 'increases_risk' },
-          { feature: 'Fwd Packets/s', impact: 0.31, direction: 'increases_risk' },
-          { feature: 'Flow Duration', impact: 0.18, direction: 'decreases_risk' },
-        ]
-      : [],
-  });
-
-  const handleSend = async () => {
-    setSending(true);
-    setSuccess('');
-    setError('');
-    try {
-      for (let i = 0; i < count; i++) {
-        const src = i === 0 ? srcIp : randomIp();
-        const dst = i === 0 ? dstIp : randomIp();
-        await ingestAlert(buildAlert(src, dst) as Parameters<typeof ingestAlert>[0]);
-      }
-      setSuccess(`Injected ${count} test alert${count !== 1 ? 's' : ''} successfully.`);
-      queryClient.invalidateQueries({ queryKey: ['alerts'] });
-      setSrcIp(randomIp());
-      setDstIp(randomIp());
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to inject alert');
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6">
-      <div className="mb-5 flex items-center gap-3">
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-400/10 text-amber-400 ring-1 ring-amber-400/20">
-          <FlaskConical className="h-4 w-4" />
-        </span>
-        <div>
-          <h2 className="text-base font-semibold text-white">Inject Test Alert</h2>
-          <p className="text-xs text-slate-500">
-            Send synthetic alerts to test the pipeline without real capture
-          </p>
-        </div>
-      </div>
-
-      {success && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">
-          <CheckCircle className="h-4 w-4 shrink-0" />
-          {success}
-        </div>
-      )}
-      {error && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-          <XCircle className="h-4 w-4 shrink-0" />
-          {error}
-        </div>
-      )}
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-slate-400">Source IP</label>
-          <div className="flex gap-2">
-            <input
-              value={srcIp}
-              onChange={(e) => setSrcIp(e.target.value)}
-              className="flex-1 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-sm text-slate-100 font-mono focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-            />
-            <button
-              onClick={() => setSrcIp(randomIp())}
-              className="rounded-lg border border-slate-700 bg-slate-800/60 px-2 text-xs text-slate-400 hover:text-slate-200"
-              title="Random IP"
-            >
-              ↻
-            </button>
-          </div>
-        </div>
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-slate-400">Destination IP</label>
-          <div className="flex gap-2">
-            <input
-              value={dstIp}
-              onChange={(e) => setDstIp(e.target.value)}
-              className="flex-1 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-sm text-slate-100 font-mono focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-            />
-            <button
-              onClick={() => setDstIp(randomIp())}
-              className="rounded-lg border border-slate-700 bg-slate-800/60 px-2 text-xs text-slate-400 hover:text-slate-200"
-              title="Random IP"
-            >
-              ↻
-            </button>
-          </div>
-        </div>
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-slate-400">Severity</label>
-          <select
-            value={severity}
-            onChange={(e) => setSeverity(e.target.value)}
-            className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-          >
-            {SEVERITIES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-slate-400">Label</label>
-          <select
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-          >
-            {LABELS.map((l) => (
-              <option key={l} value={l}>{l}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-slate-400">Malicious?</label>
-          <div className="flex gap-2 pt-1">
-            {[true, false].map((v) => (
-              <button
-                key={String(v)}
-                onClick={() => setMalicious(v)}
-                className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition ${
-                  malicious === v
-                    ? v
-                      ? 'border-red-500/40 bg-red-500/15 text-red-400'
-                      : 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400'
-                    : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-600'
-                }`}
-              >
-                {v ? 'Yes' : 'No'}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-slate-400">Batch count</label>
-          <input
-            type="number"
-            min={1}
-            max={50}
-            value={count}
-            onChange={(e) => setCount(Math.max(1, Math.min(50, Number(e.target.value))))}
-            className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-          />
-        </div>
-      </div>
-
-      <button
-        onClick={handleSend}
-        disabled={sending}
-        className="mt-5 flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-60"
-      >
-        <FlaskConical className={`h-4 w-4 ${sending ? 'animate-pulse' : ''}`} />
-        {sending ? 'Sending…' : `Send ${count > 1 ? `${count} alerts` : 'Alert'}`}
-      </button>
-    </div>
-  );
-}
 
 // ─── Register User ────────────────────────────────────────────────────────────
 
@@ -1072,7 +880,6 @@ export function AdminPage() {
         <ThresholdsCard />
         <RetentionCard />
         <PcapUploadCard />
-        <TestAlertCard />
         {isAdmin && <RegisterUserCard />}
         {isAdmin && <UserManagementCard />}
       </div>
