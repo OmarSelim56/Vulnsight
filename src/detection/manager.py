@@ -146,20 +146,16 @@ class DetectionManager:
                     self._status.flows_processed += 1
                     self._status.last_flow_at = datetime.now(timezone.utc).isoformat()
 
+                # Engine applies the tuned threshold (from model/threshold.json) internally.
+                # No second-pass thresholding here — the trained operating point is the
+                # source of truth, and re-thresholding from the DB silently broke
+                # detections when the slider was set above the trained value.
                 prediction, confidence = engine.process_flow(features)
                 if prediction is None:
                     continue
 
                 with self._lock:
                     self._status.predictions_made += 1
-
-                # Apply configurable confidence threshold
-                try:
-                    threshold = float(repository.get_setting("malicious_confidence_min") or 0.5)
-                except Exception:
-                    threshold = 0.5
-                if prediction == 1 and confidence < threshold:
-                    prediction = 0
 
                 shap_features: List[Dict] = []
                 if prediction == 1:

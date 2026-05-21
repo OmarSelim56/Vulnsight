@@ -801,18 +801,21 @@ function ThresholdsCard() {
       </div>
 
       <div className="space-y-5">
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-slate-400">
-            Min. malicious confidence — <span className="text-cyan-400">{((effective.malicious_confidence_min ?? 0.5) * 100).toFixed(0)}%</span>
-          </label>
-          <input
-            type="range" min={0.1} max={0.99} step={0.01}
-            value={effective.malicious_confidence_min ?? 0.5}
-            onChange={(e) => setLocal((p) => ({ ...p, malicious_confidence_min: parseFloat(e.target.value) }))}
-            className="w-full accent-cyan-500"
-          />
-          <div className="mt-0.5 flex justify-between text-xs text-slate-600">
-            <span>10% (sensitive)</span><span>99% (strict)</span>
+        {/* Read-only display of the trained decision threshold */}
+        <div className="rounded-lg border border-slate-800 bg-slate-800/40 px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-slate-400">Model decision threshold</p>
+              <p className="text-[11px] text-slate-600 mt-0.5">
+                Set during training to maximise F1 on the validation set.
+                Edit by retraining the model, not from this UI.
+              </p>
+            </div>
+            <span className="text-2xl font-bold text-cyan-400 tabular-nums">
+              {effective.model_decision_threshold != null
+                ? effective.model_decision_threshold.toFixed(2)
+                : '—'}
+            </span>
           </div>
         </div>
 

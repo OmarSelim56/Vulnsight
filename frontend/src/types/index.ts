@@ -96,7 +96,8 @@ export interface SeverityBreakdown {
 }
 
 export interface Thresholds {
-  malicious_confidence_min: number;
+  /** Read-only: threshold the trained model uses (from model/threshold.json) */
+  model_decision_threshold: number | null;
   dedup_window_seconds: number;
   alert_notification_severities: string[];
   max_alerts_per_page: number;
