@@ -795,8 +795,8 @@ function ThresholdsCard() {
           <Settings2 className="h-4 w-4" />
         </span>
         <div>
-          <h2 className="text-base font-semibold text-white">Detection Thresholds</h2>
-          <p className="text-xs text-slate-500">Configure sensitivity and deduplication behaviour</p>
+          <h2 className="text-base font-semibold text-white">Alert Preferences</h2>
+          <p className="text-xs text-slate-500">Deduplication window and toast notification severities</p>
         </div>
       </div>
 
