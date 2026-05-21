@@ -4,6 +4,7 @@ import {
   Database,
   FlaskConical,
   Layers,
+  Settings as SettingsIcon,
   TrendingUp,
   ShieldCheck,
 } from 'lucide-react';
@@ -36,20 +37,23 @@ const FEATURES = [
 ];
 
 const METRICS = [
-  { label: 'Accuracy',  value: '99.0%', color: 'text-emerald-400', barColor: 'bg-emerald-400', bar: 99.0 },
-  { label: 'Precision', value: '98.8%', color: 'text-cyan-400',    barColor: 'bg-cyan-400',    bar: 98.8 },
-  { label: 'Recall',    value: '99.0%', color: 'text-violet-400',  barColor: 'bg-violet-400',  bar: 99.0 },
-  { label: 'F1-Score',  value: '98.9%', color: 'text-amber-400',   barColor: 'bg-amber-400',   bar: 98.9 },
+  { label: 'Accuracy',  value: '99.70%', color: 'text-emerald-400', barColor: 'bg-emerald-400', bar: 99.70 },
+  { label: 'Precision', value: '99.40%', color: 'text-cyan-400',    barColor: 'bg-cyan-400',    bar: 99.40 },
+  { label: 'Recall',    value: '99.08%', color: 'text-violet-400',  barColor: 'bg-violet-400',  bar: 99.08 },
+  { label: 'F1-Score',  value: '99.24%', color: 'text-amber-400',   barColor: 'bg-amber-400',   bar: 99.24 },
 ];
 
-// Confusion matrix values (held-out test set, ~413k samples)
+// Confusion matrix values from the actual training run (held-out test set, 424,171 samples)
 const CM = {
-  TP: 187_240,   // Malicious → correctly predicted Malicious
-  TN: 222_310,   // Benign    → correctly predicted Benign
-  FP:   2_180,   // Benign    → incorrectly predicted Malicious
-  FN:   1_870,   // Malicious → incorrectly predicted Benign
+  TP:  82_713,   // Malicious → correctly predicted Malicious
+  TN: 340_188,   // Benign    → correctly predicted Benign
+  FP:     500,   // Benign    → incorrectly predicted Malicious
+  FN:     770,   // Malicious → incorrectly predicted Benign
 };
-const FPR = ((CM.FP / (CM.FP + CM.TN)) * 100).toFixed(2); // ~0.97%
+const FPR = ((CM.FP / (CM.FP + CM.TN)) * 100).toFixed(2); // 0.15%
+
+// Tuned decision threshold (from model/threshold.json — maximises F1 on validation set)
+const THRESHOLD = 0.78;
 
 const CATEGORY_COLORS: Record<string, string> = {
   Flow:           'bg-cyan-500/15 text-cyan-300 ring-1 ring-cyan-500/30',
@@ -61,13 +65,12 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 const ARCH_LAYERS = [
-  { name: 'Input Layer',   detail: '20 flow features',                              color: 'border-slate-600 bg-slate-800/60'       },
-  { name: 'Conv1D',        detail: '64 filters, kernel 3, ReLU',                   color: 'border-cyan-600/50 bg-cyan-900/20'       },
-  { name: 'MaxPooling1D',  detail: 'pool size 2',                                   color: 'border-cyan-600/30 bg-cyan-900/10'       },
-  { name: 'BiLSTM',        detail: '128 units (×2 bidirectional), Dropout 0.3',    color: 'border-violet-600/50 bg-violet-900/20'   },
-  { name: 'BiLSTM',        detail: '64 units (×2 bidirectional), Dropout 0.3',     color: 'border-violet-600/40 bg-violet-900/15'   },
-  { name: 'Dense',         detail: '64 units, ReLU, Dropout 0.4',                  color: 'border-amber-600/40 bg-amber-900/10'     },
-  { name: 'Output Layer',  detail: '1 unit, Sigmoid (binary classification)',       color: 'border-emerald-600/50 bg-emerald-900/20' },
+  { name: 'Input',         detail: 'Sliding window of 10 flows × 20 features',    color: 'border-slate-600 bg-slate-800/60'       },
+  { name: 'Conv1D',        detail: '64 filters, kernel 3, padding 1, ReLU',       color: 'border-cyan-600/50 bg-cyan-900/20'       },
+  { name: 'BiLSTM (×2)',   detail: '128 hidden × 2 directions, Dropout 0.3',      color: 'border-violet-600/50 bg-violet-900/20'   },
+  { name: 'Last Timestep', detail: 'Take final BiLSTM output (1, 256)',           color: 'border-violet-600/30 bg-violet-900/10'   },
+  { name: 'Dense',         detail: '256 → 64, ReLU, Dropout 0.5',                 color: 'border-amber-600/40 bg-amber-900/10'     },
+  { name: 'Output',        detail: '64 → 2  (softmax: benign / malicious)',       color: 'border-emerald-600/50 bg-emerald-900/20' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -159,17 +162,17 @@ export function ModelPage() {
       <div>
         <h1 className="text-2xl font-bold text-white">AI Detection Model</h1>
         <p className="mt-1 text-sm text-slate-400">
-          CNN-BiLSTM hybrid architecture trained on CIC-IDS 2017/2018 network intrusion datasets.
+          CNN-BiLSTM hybrid trained on CIC-IDS 2017 · 99.70% accuracy · 0.15% false positive rate.
         </p>
       </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
-          { label: 'Architecture',    value: 'CNN-BiLSTM', icon: Brain,      color: 'text-cyan-400'    },
-          { label: 'Input Features',  value: '20',         icon: Layers,     color: 'text-violet-400'  },
-          { label: 'Training Samples',value: '~2.8M',      icon: Database,   color: 'text-amber-400'   },
-          { label: 'Task',            value: 'Binary',     icon: ShieldCheck, color: 'text-emerald-400' },
+          { label: 'Architecture',    value: 'CNN-BiLSTM',  icon: Brain,       color: 'text-cyan-400'    },
+          { label: 'Input Features',  value: '20',          icon: Layers,      color: 'text-violet-400'  },
+          { label: 'Training Windows',value: '~2.83M',      icon: Database,    color: 'text-amber-400'   },
+          { label: 'Test Accuracy',   value: '99.70%',      icon: ShieldCheck, color: 'text-emerald-400' },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
             <Icon className={`h-5 w-5 ${color} mb-2`} />
@@ -184,7 +187,7 @@ export function ModelPage() {
         <SectionHeader
           icon={TrendingUp}
           title="Performance Metrics"
-          subtitle="Evaluated on held-out test set · ~413,600 samples"
+          subtitle={`Evaluated on held-out test set · 424,171 windows · decision threshold ${THRESHOLD}`}
         />
 
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
@@ -271,10 +274,11 @@ export function ModelPage() {
             {/* Key facts */}
             <dl className="space-y-3 text-sm">
               {[
-                { term: 'Dataset',       def: 'CIC-IDS 2017 & CIC-IDS 2018' },
-                { term: 'Source',        def: 'Canadian Institute for Cybersecurity' },
-                { term: 'Total samples', def: '~2.8 million flows' },
-                { term: 'Preprocessing', def: 'StandardScaler normalisation, SMOTE oversampling on minority classes' },
+                { term: 'Dataset',       def: 'CIC-IDS 2017' },
+                { term: 'Source',        def: 'Canadian Institute for Cybersecurity (UNB)' },
+                { term: 'Total windows', def: '2,827,807 sliding windows (10 flows each)' },
+                { term: 'Window size',   def: '10 consecutive flows per sample' },
+                { term: 'Preprocessing', def: 'StandardScaler fitted on training data only, class-weighted loss for imbalance' },
               ].map(({ term, def }) => (
                 <div key={term} className="flex gap-3 border-b border-slate-800/60 pb-3 last:border-0 last:pb-0">
                   <dt className="w-32 shrink-0 text-slate-500 font-medium">{term}</dt>
@@ -313,6 +317,36 @@ export function ModelPage() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Training Configuration */}
+      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+        <SectionHeader
+          icon={SettingsIcon}
+          title="Training Configuration"
+          subtitle="Hyperparameters and procedures used during training"
+        />
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-sm">
+          {[
+            { k: 'Optimizer',         v: 'AdamW' },
+            { k: 'Initial LR',        v: '1 × 10⁻³' },
+            { k: 'Weight decay',      v: '1 × 10⁻⁴' },
+            { k: 'LR scheduler',      v: 'ReduceLROnPlateau' },
+            { k: 'Batch size',        v: '512' },
+            { k: 'Loss',              v: 'Weighted CrossEntropy' },
+            { k: 'Gradient clipping', v: 'Norm = 1.0' },
+            { k: 'LSTM init',         v: 'Xavier + Orthogonal' },
+            { k: 'Mixed precision',   v: 'AMP (float16)' },
+            { k: 'Early stopping',    v: 'Patience 10' },
+            { k: 'Epochs trained',    v: '23 (early stopped)' },
+            { k: 'Decision threshold',v: `${THRESHOLD} (tuned by F1)` },
+          ].map(({ k, v }) => (
+            <div key={k} className="rounded-lg border border-slate-800 bg-slate-800/30 px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wide text-slate-500">{k}</p>
+              <p className="text-sm font-semibold text-slate-200 mt-0.5">{v}</p>
+            </div>
+          ))}
         </div>
       </div>
 
