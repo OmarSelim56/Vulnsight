@@ -21,7 +21,6 @@ export function AlertTable({ alerts, compact = false }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('timestamp');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [filterSeverity, setFilterSeverity] = useState('');
-  const [filterMalicious, setFilterMalicious] = useState<'' | 'true' | 'false'>('');
   const [selected, setSelected] = useState<Alert | null>(null);
 
   const handleSort = (key: SortKey) => {
@@ -30,10 +29,9 @@ export function AlertTable({ alerts, compact = false }: Props) {
   };
 
   const sorted = useMemo(() => {
-    let rows = alerts.filter((a) => a.severity !== 'info'); // info = benign noise, excluded
+    let rows = alerts;
     if (filterSeverity) rows = rows.filter((a) => a.severity === filterSeverity);
-    if (filterMalicious !== '') rows = rows.filter((a) => String(a.is_malicious) === filterMalicious);
-    rows.sort((a, b) => {
+    rows = [...rows].sort((a, b) => {
       let cmp = 0;
       if (sortKey === 'timestamp') cmp = a.timestamp.localeCompare(b.timestamp);
       else if (sortKey === 'severity') cmp = (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9);
@@ -42,7 +40,7 @@ export function AlertTable({ alerts, compact = false }: Props) {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return rows;
-  }, [alerts, sortKey, sortDir, filterSeverity, filterMalicious]);
+  }, [alerts, sortKey, sortDir, filterSeverity]);
 
   const SortIcon = ({ k }: { k: SortKey }) =>
     sortKey === k
@@ -60,7 +58,7 @@ export function AlertTable({ alerts, compact = false }: Props) {
 
   // Always show the full canonical severity list so the filter is predictable,
   // regardless of which severities happen to be present in the current data.
-  const severities = ['critical', 'high', 'medium', 'low', 'warning'];
+  const severities = ['critical', 'high', 'medium', 'low', 'info'];
 
   return (
     <>
@@ -75,15 +73,6 @@ export function AlertTable({ alerts, compact = false }: Props) {
             {severities.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
-          </select>
-          <select
-            value={filterMalicious}
-            onChange={(e) => setFilterMalicious(e.target.value as '' | 'true' | 'false')}
-            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-          >
-            <option value="">All traffic</option>
-            <option value="true">Malicious only</option>
-            <option value="false">Benign only</option>
           </select>
           <span className="ml-auto text-xs text-slate-500">{sorted.length} events</span>
         </div>
