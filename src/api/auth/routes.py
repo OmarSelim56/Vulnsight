@@ -39,6 +39,9 @@ def register(payload: RegisterRequest):
     if auth_repository is None:
         raise HTTPException(status_code=500, detail="Auth repository is not configured")
     username = payload.username.strip()
+    # Single-role policy: every user has exactly one role.
+    if len(payload.roles) != 1:
+        raise HTTPException(status_code=400, detail="exactly one role is required")
     try:
         user_id = auth_repository.create_user(
             username=username,

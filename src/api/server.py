@@ -365,6 +365,9 @@ def update_user_roles(
     roles = body.get("roles", [])
     if not isinstance(roles, list):
         raise HTTPException(status_code=400, detail="roles must be a list")
+    # Single-role policy: every user has exactly one role.
+    if len(roles) != 1:
+        raise HTTPException(status_code=400, detail="exactly one role is required")
     auth_repository.update_user_roles(user_id, roles)
     user = auth_repository.get_user_by_id(user_id)
     return {**user, "roles": auth_repository.get_user_roles(user_id)}

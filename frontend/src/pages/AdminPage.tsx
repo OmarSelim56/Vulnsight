@@ -286,7 +286,7 @@ function UserManagementCard() {
   const queryClient = useQueryClient();
   const { user: currentUser } = useAuth();
   const [editingRoles, setEditingRoles] = useState<number | null>(null);
-  const [pendingRoles, setPendingRoles] = useState<string[]>([]);
+  const [pendingRole, setPendingRole] = useState<string>('client');
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
 
   const { data: users = [], isLoading, error } = useQuery<UserRecord[]>({
@@ -320,13 +320,11 @@ function UserManagementCard() {
 
   const startEditRoles = (user: UserRecord) => {
     setEditingRoles(user.id);
-    setPendingRoles([...user.roles]);
+    setPendingRole(user.roles[0] ?? 'client');   // pick the first/only role
   };
 
-  const togglePendingRole = (role: string) => {
-    setPendingRoles((prev) =>
-      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role],
-    );
+  const pickPendingRole = (role: string) => {
+    setPendingRole(role);
   };
 
   const ROLE_COLOR: Record<string, string> = {
@@ -402,9 +400,9 @@ function UserManagementCard() {
                           {AVAILABLE_ROLES.map((role) => (
                             <button
                               key={role}
-                              onClick={() => togglePendingRole(role)}
+                              onClick={() => pickPendingRole(role)}
                               className={`rounded px-2 py-0.5 text-[11px] font-medium ring-1 transition ${
-                                pendingRoles.includes(role)
+                                pendingRole === role
                                   ? ROLE_COLOR[role] ?? 'bg-slate-700 text-slate-300 ring-slate-600/40'
                                   : 'bg-slate-800/40 text-slate-500 ring-slate-700 opacity-40 hover:opacity-70'
                               }`}
@@ -443,8 +441,8 @@ function UserManagementCard() {
                       {editingRoles === u.id ? (
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => updateRolesMutation.mutate({ id: u.id, roles: pendingRoles })}
-                            disabled={pendingRoles.length === 0 || updateRolesMutation.isPending}
+                            onClick={() => updateRolesMutation.mutate({ id: u.id, roles: [pendingRole] })}
+                            disabled={updateRolesMutation.isPending}
                             className="rounded bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
                           >
                             {updateRolesMutation.isPending ? '…' : 'Save'}
@@ -534,25 +532,23 @@ function UserManagementCard() {
 function RegisterUserCard() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [selectedRoles, setSelectedRoles] = useState<string[]>(['client']);
+  const [selectedRole, setSelectedRole] = useState<string>('client');
   const [success, setSuccess] = useState('');
   const queryClient = useQueryClient();
 
   const { mutate, isPending, error, reset } = useMutation({
-    mutationFn: () => registerUser(username, password, selectedRoles),
+    mutationFn: () => registerUser(username, password, [selectedRole]),
     onSuccess: (user) => {
-      setSuccess(`User "${user.username}" created with roles: ${user.roles.join(', ')}`);
+      setSuccess(`User "${user.username}" created with role: ${user.roles.join(', ')}`);
       setUsername('');
       setPassword('');
-      setSelectedRoles(['client']);
+      setSelectedRole('client');
       queryClient.invalidateQueries({ queryKey: ['users'] });
     },
   });
 
-  const toggleRole = (role: string) => {
-    setSelectedRoles((prev) =>
-      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role],
-    );
+  const pickRole = (role: string) => {
+    setSelectedRole(role);
     reset();
     setSuccess('');
   };
@@ -565,7 +561,7 @@ function RegisterUserCard() {
         </span>
         <div>
           <h2 className="text-base font-semibold text-white">Register User</h2>
-          <p className="text-xs text-slate-500">Create a new account with role assignment</p>
+          <p className="text-xs text-slate-500">Create a new account with a single role</p>
         </div>
       </div>
 
@@ -613,15 +609,15 @@ function RegisterUserCard() {
         </div>
 
         <div>
-          <label className="mb-2 block text-xs font-medium text-slate-400">Roles</label>
+          <label className="mb-2 block text-xs font-medium text-slate-400">Role</label>
           <div className="flex flex-wrap gap-2">
             {AVAILABLE_ROLES.map((role) => (
               <button
                 key={role}
                 type="button"
-                onClick={() => toggleRole(role)}
+                onClick={() => pickRole(role)}
                 className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-                  selectedRoles.includes(role)
+                  selectedRole === role
                     ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-400'
                     : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-600'
                 }`}
@@ -630,14 +626,11 @@ function RegisterUserCard() {
               </button>
             ))}
           </div>
-          {selectedRoles.length === 0 && (
-            <p className="mt-1.5 text-xs text-red-400">Select at least one role</p>
-          )}
         </div>
 
         <button
           type="submit"
-          disabled={isPending || selectedRoles.length === 0}
+          disabled={isPending}
           className="flex items-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
         >
           {isPending ? 'Creating…' : 'Create User'}
