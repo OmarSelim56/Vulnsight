@@ -801,24 +801,6 @@ function ThresholdsCard() {
       </div>
 
       <div className="space-y-5">
-        {/* Read-only display of the trained decision threshold */}
-        <div className="rounded-lg border border-slate-800 bg-slate-800/40 px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-medium text-slate-400">Model decision threshold</p>
-              <p className="text-[11px] text-slate-600 mt-0.5">
-                Set during training to maximise F1 on the validation set.
-                Edit by retraining the model, not from this UI.
-              </p>
-            </div>
-            <span className="text-2xl font-bold text-cyan-400 tabular-nums">
-              {effective.model_decision_threshold != null
-                ? effective.model_decision_threshold.toFixed(2)
-                : '—'}
-            </span>
-          </div>
-        </div>
-
         <div>
           <label className="mb-1.5 block text-xs font-medium text-slate-400">
             Dedup window — <span className="text-cyan-400">{effective.dedup_window_seconds ?? 60} s</span>

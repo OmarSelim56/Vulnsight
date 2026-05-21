@@ -1,12 +1,16 @@
 /**
- * AlertToast — shows a slide-in notification whenever a high or critical
- * alert arrives over the WebSocket live feed.
+ * AlertToast — shows a slide-in notification whenever an alert of a
+ * user-selected severity arrives over the WebSocket live feed.
  *
- * Usage: render once inside Layout, pass the latest liveAlerts array.
- * The component tracks which alert IDs it has already shown.
+ * Which severities trigger a toast is read live from the user's setting
+ * "alert_notification_severities" (configured in Settings → Detection
+ * Thresholds). Defaults to ["critical", "high"] when the API hasn't
+ * answered yet or no preference has been saved.
  */
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { getThresholds } from '../api/client';
 import type { Alert } from '../types';
 
 interface Toast {
@@ -14,17 +18,22 @@ interface Toast {
   alert: Alert;
 }
 
-const NOTIFY_SEVERITIES = new Set(['critical', 'high']);
+const DEFAULT_NOTIFY_SEVERITIES = ['critical', 'high'];
 const AUTO_DISMISS_MS = 6000;
 
 const SEV_STYLE: Record<string, string> = {
   critical: 'border-red-500/60 bg-red-950/80 text-red-300',
   high:     'border-orange-500/60 bg-orange-950/80 text-orange-300',
+  medium:   'border-amber-500/60 bg-amber-950/80 text-amber-300',
+  low:      'border-yellow-500/60 bg-yellow-950/80 text-yellow-300',
+  info:     'border-sky-500/60 bg-sky-950/80 text-sky-300',
 };
+
+const FALLBACK_STYLE = 'border-slate-500/60 bg-slate-900/80 text-slate-300';
 
 function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
   const { alert } = toast;
-  const style = SEV_STYLE[alert.severity] ?? SEV_STYLE.high;
+  const style = SEV_STYLE[alert.severity] ?? FALLBACK_STYLE;
 
   useEffect(() => {
     const t = setTimeout(onDismiss, AUTO_DISMISS_MS);
@@ -63,16 +72,31 @@ export function AlertToastContainer({ liveAlerts }: { liveAlerts: Alert[] }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const seenRef = useRef(new Set<string>());
 
+  // Pull the user's selected severities. Re-fetch on focus so changes saved
+  // in another tab show up. Falls back to the default while the request is
+  // in flight or if the call fails (e.g. logged out).
+  const { data: thresholds } = useQuery({
+    queryKey: ['thresholds'],
+    queryFn:  getThresholds,
+    retry:    false,
+    staleTime: 30_000,
+  });
+
+  const notifySeverities = useMemo(
+    () => new Set<string>(thresholds?.alert_notification_severities ?? DEFAULT_NOTIFY_SEVERITIES),
+    [thresholds],
+  );
+
   useEffect(() => {
     liveAlerts.forEach((alert) => {
       // Use timestamp+src+dst as a stable key (no separate id field)
       const key = `${alert.timestamp}|${alert.source_ip}|${alert.destination_ip}`;
-      if (!NOTIFY_SEVERITIES.has(alert.severity)) return;
+      if (!notifySeverities.has(alert.severity)) return;
       if (seenRef.current.has(key)) return;
       seenRef.current.add(key);
       setToasts((prev) => [{ id: key, alert }, ...prev].slice(0, 5));
     });
-  }, [liveAlerts]);
+  }, [liveAlerts, notifySeverities]);
 
   const dismiss = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));

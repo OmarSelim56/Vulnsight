@@ -370,24 +370,9 @@ def update_user_roles(
     return {**user, "roles": auth_repository.get_user_roles(user_id)}
 
 
-def _load_model_threshold() -> float | None:
-    """Return the threshold the engine actually uses (from model/threshold.json)."""
-    try:
-        from pathlib import Path as _P
-        import json as _json
-        root = _P(__file__).resolve().parents[2]
-        with open(root / "model" / "threshold.json") as f:
-            return float(_json.load(f)["threshold"])
-    except Exception:
-        return None
-
-
 @app.get("/api/v1/admin/thresholds")
 def get_thresholds(_=Depends(require_roles("admin", "analyst"))):
-    settings = repository.get_all_settings()
-    # surface the trained threshold (read-only) so the UI can display it
-    settings["model_decision_threshold"] = _load_model_threshold()
-    return settings
+    return repository.get_all_settings()
 
 
 @app.put("/api/v1/admin/thresholds")
@@ -395,7 +380,8 @@ def set_thresholds(
     body: Dict[str, Any],
     _=Depends(require_roles("admin")),
 ):
-    # model_decision_threshold is read-only — it's owned by training, not settings.
+    # The model's decision threshold lives in model/threshold.json and is set
+    # at training time. It is intentionally not editable from this endpoint.
     allowed = {
         "dedup_window_seconds",
         "alert_notification_severities",
@@ -404,9 +390,7 @@ def set_thresholds(
     for key, value in body.items():
         if key in allowed:
             repository.set_setting(key, value)
-    settings = repository.get_all_settings()
-    settings["model_decision_threshold"] = _load_model_threshold()
-    return settings
+    return repository.get_all_settings()
 
 
 # ------------------------------------------------------------------
