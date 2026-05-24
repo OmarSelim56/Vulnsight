@@ -5,72 +5,98 @@ import {
   FlaskConical,
   Layers,
   Settings as SettingsIcon,
-  TrendingUp,
   ShieldCheck,
+  TrendingUp,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
-// Data
+// Data — values reflect the actual most-recent training run with the
+// 34 tool-agnostic feature set (PowerTransformer + StandardScaler pipeline,
+// Focal Loss, Cosine LR + warmup, BatchNorm + Attention model).
 // ---------------------------------------------------------------------------
 
 const FEATURES = [
-  { id: 1,  name: 'Flow Duration',                    description: 'Total duration of the flow in microseconds',                   category: 'Flow'        },
-  { id: 2,  name: 'Total Forward Packets',            description: 'Number of packets in the forward direction',                   category: 'Volume'      },
-  { id: 3,  name: 'Total Backward Packets',           description: 'Number of packets in the backward direction',                  category: 'Volume'      },
-  { id: 4,  name: 'Total Length of Forward Packets',  description: 'Total bytes sent in the forward direction',                    category: 'Volume'      },
-  { id: 5,  name: 'Total Length of Backward Packets', description: 'Total bytes sent in the backward direction',                   category: 'Volume'      },
-  { id: 6,  name: 'Forward Packet Length Mean',       description: 'Mean size of forward packets in bytes',                        category: 'Packet Size' },
-  { id: 7,  name: 'Backward Packet Length Mean',      description: 'Mean size of backward packets in bytes',                       category: 'Packet Size' },
-  { id: 8,  name: 'Packet Length Mean',               description: 'Mean length of all packets in the flow',                       category: 'Packet Size' },
-  { id: 9,  name: 'Packet Length Std',                description: 'Standard deviation of packet lengths',                         category: 'Packet Size' },
-  { id: 10, name: 'Packet Length Variance',           description: 'Variance in packet sizes across the flow',                     category: 'Packet Size' },
-  { id: 11, name: 'Flow Bytes/s',                     description: 'Rate of bytes transferred per second',                         category: 'Rate'        },
-  { id: 12, name: 'Flow Packets/s',                   description: 'Rate of packets transmitted per second',                       category: 'Rate'        },
-  { id: 13, name: 'Flow IAT Mean',                    description: 'Mean inter-arrival time between flow packets',                  category: 'Timing'      },
-  { id: 14, name: 'Flow IAT Std',                     description: 'Standard deviation of inter-arrival times',                    category: 'Timing'      },
-  { id: 15, name: 'Forward IAT Mean',                 description: 'Mean inter-arrival time for forward packets',                   category: 'Timing'      },
-  { id: 16, name: 'Backward IAT Mean',                description: 'Mean inter-arrival time for backward packets',                  category: 'Timing'      },
-  { id: 17, name: 'Active Mean',                      description: 'Mean time a flow was active before going idle',                 category: 'Timing'      },
-  { id: 18, name: 'FIN Flag Count',                   description: 'Number of packets with FIN flag set',                          category: 'Flags'       },
-  { id: 19, name: 'SYN Flag Count',                   description: 'Number of packets with SYN flag set (connection initiations)', category: 'Flags'       },
-  { id: 20, name: 'RST Flag Count',                   description: 'Number of packets with RST flag set (abrupt terminations)',    category: 'Flags'       },
+  { id: 1,  name: 'Destination Port',              description: 'Server-side port — strong signal for service-targeted attacks',  category: 'Flow'        },
+  // Volume — packet/byte counts per direction
+  { id: 2,  name: 'Total Fwd Packets',             description: 'Number of packets sent in the forward (client→server) direction', category: 'Volume'      },
+  { id: 3,  name: 'Total Backward Packets',        description: 'Number of packets returned in the backward direction',            category: 'Volume'      },
+  { id: 4,  name: 'Total Length of Fwd Packets',   description: 'Total bytes sent in the forward direction',                       category: 'Volume'      },
+  { id: 5,  name: 'Total Length of Bwd Packets',   description: 'Total bytes received in the backward direction',                  category: 'Volume'      },
+  // Forward packet size distribution
+  { id: 6,  name: 'Fwd Packet Length Max',         description: 'Largest packet in the forward direction',                         category: 'Packet Size' },
+  { id: 7,  name: 'Fwd Packet Length Min',         description: 'Smallest packet in the forward direction',                        category: 'Packet Size' },
+  { id: 8,  name: 'Fwd Packet Length Mean',        description: 'Mean forward packet size',                                        category: 'Packet Size' },
+  { id: 9,  name: 'Fwd Packet Length Std',         description: 'Standard deviation of forward packet sizes',                      category: 'Packet Size' },
+  // Backward packet size distribution
+  { id: 10, name: 'Bwd Packet Length Max',         description: 'Largest packet in the backward direction',                        category: 'Packet Size' },
+  { id: 11, name: 'Bwd Packet Length Min',         description: 'Smallest packet in the backward direction',                       category: 'Packet Size' },
+  { id: 12, name: 'Bwd Packet Length Mean',        description: 'Mean backward packet size',                                       category: 'Packet Size' },
+  { id: 13, name: 'Bwd Packet Length Std',         description: 'Standard deviation of backward packet sizes',                     category: 'Packet Size' },
+  // Bidirectional packet size distribution
+  { id: 14, name: 'Min Packet Length',             description: 'Smallest packet seen in the entire flow',                         category: 'Packet Size' },
+  { id: 15, name: 'Max Packet Length',             description: 'Largest packet seen in the entire flow',                          category: 'Packet Size' },
+  { id: 16, name: 'Packet Length Mean',            description: 'Mean packet length across both directions',                       category: 'Packet Size' },
+  { id: 17, name: 'Packet Length Std',             description: 'Standard deviation of packet lengths',                            category: 'Packet Size' },
+  { id: 18, name: 'Packet Length Variance',        description: 'Variance of packet lengths (signal of payload uniformity)',       category: 'Packet Size' },
+  // Bidirectional TCP flag counts
+  { id: 19, name: 'FIN Flag Count',                description: 'Packets with FIN flag set — graceful termination indicator',       category: 'Flags'       },
+  { id: 20, name: 'SYN Flag Count',                description: 'Packets with SYN flag — high counts indicate scans / floods',     category: 'Flags'       },
+  { id: 21, name: 'RST Flag Count',                description: 'Packets with RST flag — abrupt terminations / refused connections', category: 'Flags'     },
+  { id: 22, name: 'PSH Flag Count',                description: 'Packets with PSH flag — pushes data through TCP buffer',          category: 'Flags'       },
+  { id: 23, name: 'ACK Flag Count',                description: 'Packets with ACK flag — normal acknowledgement traffic',          category: 'Flags'       },
+  { id: 24, name: 'URG Flag Count',                description: 'Packets with URG flag — rarely seen, anomaly indicator',          category: 'Flags'       },
+  { id: 25, name: 'CWE Flag Count',                description: 'Packets with CWR flag — TCP congestion window reduction',         category: 'Flags'       },
+  { id: 26, name: 'ECE Flag Count',                description: 'Packets with ECE flag — explicit congestion echo',                category: 'Flags'       },
+  // Directional PSH / URG flag counts
+  { id: 27, name: 'Fwd PSH Flags',                 description: 'PSH flags in the forward direction (client pushes)',              category: 'Flags'       },
+  { id: 28, name: 'Bwd PSH Flags',                 description: 'PSH flags in the backward direction (server pushes)',             category: 'Flags'       },
+  { id: 29, name: 'Fwd URG Flags',                 description: 'URG flags in the forward direction',                              category: 'Flags'       },
+  { id: 30, name: 'Bwd URG Flags',                 description: 'URG flags in the backward direction',                             category: 'Flags'       },
+  // Derived ratios / averages
+  { id: 31, name: 'Down/Up Ratio',                 description: 'Backward bytes ÷ forward bytes — exfil = low ratio, download = high', category: 'Derived' },
+  { id: 32, name: 'Average Packet Size',           description: 'Total bytes ÷ total packets across the flow',                     category: 'Derived'     },
+  { id: 33, name: 'Avg Fwd Segment Size',          description: 'Mean forward TCP segment size',                                   category: 'Derived'     },
+  { id: 34, name: 'Avg Bwd Segment Size',          description: 'Mean backward TCP segment size',                                  category: 'Derived'     },
 ];
 
 const METRICS = [
-  { label: 'Accuracy',  value: '99.70%', color: 'text-emerald-400', barColor: 'bg-emerald-400', bar: 99.70 },
-  { label: 'Precision', value: '99.40%', color: 'text-cyan-400',    barColor: 'bg-cyan-400',    bar: 99.40 },
-  { label: 'Recall',    value: '99.08%', color: 'text-violet-400',  barColor: 'bg-violet-400',  bar: 99.08 },
-  { label: 'F1-Score',  value: '99.24%', color: 'text-amber-400',   barColor: 'bg-amber-400',   bar: 99.24 },
+  { label: 'Accuracy',  value: '99.85%', color: 'text-emerald-400', barColor: 'bg-emerald-400', bar: 99.85 },
+  { label: 'Precision', value: '99.60%', color: 'text-cyan-400',    barColor: 'bg-cyan-400',    bar: 99.60 },
+  { label: 'Recall',    value: '99.61%', color: 'text-violet-400',  barColor: 'bg-violet-400',  bar: 99.61 },
+  { label: 'F1-Score',  value: '99.61%', color: 'text-amber-400',   barColor: 'bg-amber-400',   bar: 99.61 },
 ];
 
-// Confusion matrix values from the actual training run (held-out test set, 424,171 samples)
+// Confusion matrix from the latest training run (held-out test set, 424,601 samples)
 const CM = {
-  TP:  82_713,   // Malicious → correctly predicted Malicious
-  TN: 340_188,   // Benign    → correctly predicted Benign
-  FP:     500,   // Benign    → incorrectly predicted Malicious
-  FN:     770,   // Malicious → incorrectly predicted Benign
+  TP:  83_323,   // Malicious → correctly predicted Malicious
+  TN: 340_621,   // Benign    → correctly predicted Benign
+  FP:     333,   // Benign    → incorrectly predicted Malicious
+  FN:     324,   // Malicious → incorrectly predicted Benign
 };
-const FPR = ((CM.FP / (CM.FP + CM.TN)) * 100).toFixed(2); // 0.15%
+const FPR = ((CM.FP / (CM.FP + CM.TN)) * 100).toFixed(3); // 0.098%
+
+const TEST_SIZE = CM.TP + CM.TN + CM.FP + CM.FN; // 424,601
 
 // Tuned decision threshold (from model/threshold.json — maximises F1 on validation set)
-const THRESHOLD = 0.78;
+const THRESHOLD = 0.76;
 
 const CATEGORY_COLORS: Record<string, string> = {
-  Flow:           'bg-cyan-500/15 text-cyan-300 ring-1 ring-cyan-500/30',
-  Volume:         'bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/30',
-  'Packet Size':  'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30',
-  Rate:           'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30',
-  Timing:         'bg-blue-500/15 text-blue-300 ring-1 ring-blue-500/30',
-  Flags:          'bg-red-500/15 text-red-300 ring-1 ring-red-500/30',
+  Flow:          'bg-cyan-500/15 text-cyan-300 ring-1 ring-cyan-500/30',
+  Volume:        'bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/30',
+  'Packet Size': 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30',
+  Flags:         'bg-red-500/15 text-red-300 ring-1 ring-red-500/30',
+  Derived:       'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30',
 };
 
 const ARCH_LAYERS = [
-  { name: 'Input',         detail: 'Sliding window of 10 flows × 20 features',    color: 'border-slate-600 bg-slate-800/60'       },
-  { name: 'Conv1D',        detail: '64 filters, kernel 3, padding 1, ReLU',       color: 'border-cyan-600/50 bg-cyan-900/20'       },
-  { name: 'BiLSTM (×2)',   detail: '128 hidden × 2 directions, Dropout 0.3',      color: 'border-violet-600/50 bg-violet-900/20'   },
-  { name: 'Last Timestep', detail: 'Take final BiLSTM output (1, 256)',           color: 'border-violet-600/30 bg-violet-900/10'   },
-  { name: 'Dense',         detail: '256 → 64, ReLU, Dropout 0.5',                 color: 'border-amber-600/40 bg-amber-900/10'     },
-  { name: 'Output',        detail: '64 → 2  (softmax: benign / malicious)',       color: 'border-emerald-600/50 bg-emerald-900/20' },
+  { name: 'Input',             detail: 'Sliding window of 10 flows × 34 features',         color: 'border-slate-600 bg-slate-800/60'       },
+  { name: 'Conv1D + BatchNorm',detail: '34→64 filters, kernel 3, ReLU',                    color: 'border-cyan-600/50 bg-cyan-900/20'      },
+  { name: 'Conv1D + BatchNorm',detail: '64→64 filters, kernel 3, ReLU (richer local features)', color: 'border-cyan-600/40 bg-cyan-900/15'  },
+  { name: 'BiLSTM (×2)',       detail: '128 hidden × 2 directions, Dropout 0.3',           color: 'border-violet-600/50 bg-violet-900/20'  },
+  { name: 'LayerNorm',         detail: 'Normalise BiLSTM output (256-dim per timestep)',   color: 'border-violet-600/30 bg-violet-900/10'  },
+  { name: 'Attention Pooling', detail: 'Additive attention — learns which of 10 flows matter most', color: 'border-blue-600/50 bg-blue-900/20' },
+  { name: 'Dense',             detail: '256 → 64, ReLU, Dropout 0.5',                      color: 'border-amber-600/40 bg-amber-900/10'    },
+  { name: 'Output',            detail: '64 → 2  (softmax: benign / malicious)',            color: 'border-emerald-600/50 bg-emerald-900/20'},
 ];
 
 // ---------------------------------------------------------------------------
@@ -139,7 +165,7 @@ function ConfusionMatrix() {
               className={`flex flex-col items-center justify-center rounded-xl border p-3 ${bg} ring-1 ${ring}`}
             >
               <span className={`text-[10px] font-bold uppercase tracking-widest ${text} mb-0.5`}>{abbr}</span>
-              <span className={`text-xl font-bold ${text}`}>{fmt(count)}</span>
+              <span className="text-xl font-bold text-white">{fmt(count)}</span>
               <span className="text-[10px] text-slate-500 mt-0.5 text-center leading-tight">{desc}</span>
             </div>
           ))}
@@ -157,22 +183,22 @@ export function ModelPage() {
   const categories = [...new Set(FEATURES.map((f) => f.category))];
 
   return (
-    <div className="space-y-6 max-w-6xl">
+    <div className="space-y-6">
       {/* Page title */}
       <div>
         <h1 className="text-2xl font-bold text-white">AI Detection Model</h1>
         <p className="mt-1 text-sm text-slate-400">
-          CNN-BiLSTM hybrid trained on CIC-IDS 2017 · 99.70% accuracy · 0.15% false positive rate.
+          CNN-BiLSTM hybrid · trained on CIC-IDS 2017 · 99.85% accuracy · 0.098% false positive rate
         </p>
       </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
-          { label: 'Architecture',    value: 'CNN-BiLSTM',  icon: Brain,       color: 'text-cyan-400'    },
-          { label: 'Input Features',  value: '20',          icon: Layers,      color: 'text-violet-400'  },
-          { label: 'Training Windows',value: '~2.83M',      icon: Database,    color: 'text-amber-400'   },
-          { label: 'Test Accuracy',   value: '99.70%',      icon: ShieldCheck, color: 'text-emerald-400' },
+          { label: 'Architecture',     value: 'CNN-BiLSTM',             icon: Brain,       color: 'text-cyan-400'    },
+          { label: 'Input Features',   value: '34',                      icon: Layers,      color: 'text-violet-400'  },
+          { label: 'Training Windows', value: '~2.83M',                  icon: Database,    color: 'text-amber-400'   },
+          { label: 'Test Accuracy',    value: '99.85%',                  icon: ShieldCheck, color: 'text-emerald-400' },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
             <Icon className={`h-5 w-5 ${color} mb-2`} />
@@ -187,7 +213,7 @@ export function ModelPage() {
         <SectionHeader
           icon={TrendingUp}
           title="Performance Metrics"
-          subtitle={`Evaluated on held-out test set · 424,171 windows · decision threshold ${THRESHOLD}`}
+          subtitle={`Evaluated on held-out test set · ${fmt(TEST_SIZE)} windows · decision threshold ${THRESHOLD}`}
         />
 
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
@@ -250,7 +276,7 @@ export function ModelPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Architecture */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
-          <SectionHeader icon={Cpu} title="Model Architecture" subtitle="Hybrid CNN-BiLSTM pipeline" />
+          <SectionHeader icon={Cpu} title="Model Architecture" subtitle="CNN-BiLSTM with BatchNorm and additive attention" />
           <div className="space-y-2">
             {ARCH_LAYERS.map((layer, i) => (
               <div key={i} className={`flex items-center gap-3 rounded-lg border px-4 py-2.5 ${layer.color}`}>
@@ -264,6 +290,11 @@ export function ModelPage() {
               </div>
             ))}
           </div>
+          <p className="mt-4 text-xs text-slate-500 leading-relaxed">
+            <span className="font-semibold text-slate-400">663,235 trainable parameters.</span>{' '}
+            Per-conversation 10-flow buffers at inference time, so each (src,dst) tuple
+            gets its own context window instead of mixing concurrent unrelated traffic.
+          </p>
         </div>
 
         {/* Dataset info */}
@@ -276,9 +307,10 @@ export function ModelPage() {
               {[
                 { term: 'Dataset',       def: 'CIC-IDS 2017' },
                 { term: 'Source',        def: 'Canadian Institute for Cybersecurity (UNB)' },
-                { term: 'Total windows', def: '2,827,807 sliding windows (10 flows each)' },
+                { term: 'Total windows', def: '2,830,671 sliding windows (10 flows each)' },
                 { term: 'Window size',   def: '10 consecutive flows per sample' },
-                { term: 'Preprocessing', def: 'StandardScaler fitted on training data only, class-weighted loss for imbalance' },
+                { term: 'Feature set',   def: '34 tool-agnostic features (count, byte, flag, derived)' },
+                { term: 'Preprocessing', def: 'PowerTransformer (Yeo-Johnson) → StandardScaler pipeline, fitted on training set only' },
               ].map(({ term, def }) => (
                 <div key={term} className="flex gap-3 border-b border-slate-800/60 pb-3 last:border-0 last:pb-0">
                   <dt className="w-32 shrink-0 text-slate-500 font-medium">{term}</dt>
@@ -291,7 +323,7 @@ export function ModelPage() {
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Attack Types</p>
               <div className="flex flex-wrap gap-1.5">
-                {['DoS', 'DDoS', 'PortScan', 'Brute Force', 'Web Attacks', 'Botnet', 'Infiltration'].map((a) => (
+                {['DDoS', 'DoS Hulk', 'DoS GoldenEye', 'DoS Slowloris', 'DoS Slowhttptest', 'PortScan', 'FTP-Patator', 'SSH-Patator', 'Web Attacks', 'Bot', 'Infiltration', 'Heartbleed'].map((a) => (
                   <span key={a} className="rounded-full bg-red-500/10 px-2.5 py-0.5 text-xs font-medium text-red-300 ring-1 ring-red-500/25">
                     {a}
                   </span>
@@ -311,10 +343,13 @@ export function ModelPage() {
                 <div className="flex items-center justify-center bg-amber-500/60 text-[10px] font-bold text-white" style={{ width: '15%' }}>15%</div>
               </div>
               <div className="flex gap-4 mt-1.5 text-xs text-slate-400">
-                <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-cyan-500/70" />Train</span>
-                <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-violet-500/60" />Validation</span>
-                <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-500/60" />Test</span>
+                <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-cyan-500/70" />Train (1.98M)</span>
+                <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-violet-500/60" />Validation (424k)</span>
+                <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-500/60" />Test (424k)</span>
               </div>
+              <p className="mt-2 text-xs text-slate-500">
+                Stratified by attack type — test set contains balanced representation of each class.
+              </p>
             </div>
           </div>
         </div>
@@ -332,15 +367,17 @@ export function ModelPage() {
             { k: 'Optimizer',         v: 'AdamW' },
             { k: 'Initial LR',        v: '1 × 10⁻³' },
             { k: 'Weight decay',      v: '1 × 10⁻⁴' },
-            { k: 'LR scheduler',      v: 'ReduceLROnPlateau' },
+            { k: 'LR scheduler',      v: 'Cosine + 3-epoch warmup' },
             { k: 'Batch size',        v: '512' },
-            { k: 'Loss',              v: 'Weighted CrossEntropy' },
+            { k: 'Loss',              v: 'Focal Loss (γ=2.0) + label smoothing (0.05)' },
+            { k: 'Class weights',     v: 'Balanced (benign 0.62, attack 2.54)' },
             { k: 'Gradient clipping', v: 'Norm = 1.0' },
-            { k: 'LSTM init',         v: 'Xavier + Orthogonal' },
+            { k: 'LSTM init',         v: 'Xavier + Orthogonal + forget bias 1' },
             { k: 'Mixed precision',   v: 'AMP (float16)' },
-            { k: 'Early stopping',    v: 'Patience 10' },
-            { k: 'Epochs trained',    v: '23 (early stopped)' },
-            { k: 'Decision threshold',v: `${THRESHOLD} (tuned by F1)` },
+            { k: 'SWA',               v: 'Stochastic Weight Averaging enabled' },
+            { k: 'Early stopping',    v: 'Patience 12' },
+            { k: 'Epochs trained',    v: '26 (early stopped)' },
+            { k: 'Decision threshold',v: `${THRESHOLD} (tuned by F1 on validation)` },
           ].map(({ k, v }) => (
             <div key={k} className="rounded-lg border border-slate-800 bg-slate-800/30 px-3 py-2">
               <p className="text-[10px] uppercase tracking-wide text-slate-500">{k}</p>
@@ -355,7 +392,7 @@ export function ModelPage() {
         <SectionHeader
           icon={FlaskConical}
           title="Input Features"
-          subtitle="20 network-flow features extracted per connection"
+          subtitle="34 tool-agnostic network-flow features extracted per connection"
         />
 
         {/* Category legend */}

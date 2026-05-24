@@ -7,7 +7,8 @@ const RETRY_MS = 5000; // wait 5 s before reconnecting (reduces noise when backe
 
 function wsUrl(): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${window.location.host}${WS_PATH}`;
+  const token = localStorage.getItem('vs_token') ?? '';
+  return `${proto}://${window.location.host}${WS_PATH}?token=${encodeURIComponent(token)}`;
 }
 
 export function useAlertsWebSocket() {

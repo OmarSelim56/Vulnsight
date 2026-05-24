@@ -15,7 +15,8 @@ export function AlertsPage() {
     refetchInterval: 30_000,
   });
 
-  const alerts = showLive ? [...liveAlerts, ...historical].slice(0, 500) : historical;
+  const allAlerts = showLive ? [...liveAlerts, ...historical].slice(0, 500) : historical;
+  const alerts = allAlerts.filter((a) => a.is_malicious);
 
   return (
     <div className="space-y-5">
@@ -23,7 +24,7 @@ export function AlertsPage() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex-1">
           <h1 className="text-xl font-bold text-white">Alerts</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Full alert history with real-time feed</p>
+          <p className="mt-0.5 text-sm text-slate-500">Malicious detections — history and real-time feed</p>
         </div>
 
         {/* Live toggle */}
@@ -41,13 +42,13 @@ export function AlertsPage() {
           {showLive ? 'Live ON' : 'Live OFF'}
         </button>
 
-        {liveAlerts.length > 0 && (
+        {liveAlerts.filter((a) => a.is_malicious).length > 0 && (
           <button
             onClick={clear}
             className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-sm text-slate-400 hover:text-red-400"
           >
             <Trash2 className="h-4 w-4" />
-            Clear live ({liveAlerts.length})
+            Clear live ({liveAlerts.filter((a) => a.is_malicious).length})
           </button>
         )}
 
@@ -62,11 +63,11 @@ export function AlertsPage() {
       </div>
 
       {/* Live feed banner */}
-      {showLive && liveAlerts.length > 0 && (
+      {showLive && liveAlerts.filter((a) => a.is_malicious).length > 0 && (
         <div className="flex items-center gap-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3">
           <span className="h-2 w-2 rounded-full bg-red-400 animate-pulse" />
           <span className="text-sm text-red-400 font-medium">
-            {liveAlerts.length} real-time event{liveAlerts.length !== 1 ? 's' : ''} received this session
+            {liveAlerts.filter((a) => a.is_malicious).length} malicious detection{liveAlerts.filter((a) => a.is_malicious).length !== 1 ? 's' : ''} this session
           </span>
           <span className="ml-auto text-xs text-red-400/60">Click any row to inspect</span>
         </div>

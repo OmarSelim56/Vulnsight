@@ -9,7 +9,7 @@ type SortKey = 'timestamp' | 'severity' | 'source_ip' | 'confidence';
 type SortDir = 'asc' | 'desc';
 
 const SEVERITY_ORDER: Record<string, number> = {
-  critical: 0, high: 1, medium: 2, low: 3, warning: 4, info: 5,
+  critical: 0, high: 1, medium: 2, low: 3,
 };
 
 interface Props {
@@ -56,9 +56,7 @@ export function AlertTable({ alerts, compact = false }: Props) {
     </th>
   );
 
-  // Always show the full canonical severity list so the filter is predictable,
-  // regardless of which severities happen to be present in the current data.
-  const severities = ['critical', 'high', 'medium', 'low', 'info'];
+  const severities = ['critical', 'high', 'medium', 'low'];
 
   return (
     <>

@@ -99,12 +99,14 @@ async def ingest_alert(
     alert: AlertPayload,
     _=Depends(require_roles("admin")),
 ):
-    # Derive attack_type from the alert label when the caller hasn't set it
-    if not alert.attack_type:
+    # Derive attack_type from label when missing or when it fell back to
+    # the generic "intrusion" catch-all (label may carry more specific info)
+    if not alert.attack_type or alert.attack_type == "intrusion":
         from src.detection.classifier import infer_attack_type_from_label
-        alert = alert.model_copy(
-            update={"attack_type": infer_attack_type_from_label(alert.label, alert.is_malicious)}
-        )
+        derived = infer_attack_type_from_label(alert.label, alert.is_malicious)
+        # Only override if we got something more specific than intrusion
+        if derived != "intrusion" or not alert.attack_type:
+            alert = alert.model_copy(update={"attack_type": derived})
     repository.save_alert(alert)
     payload = alert.model_dump(mode="json") if hasattr(alert, "model_dump") else alert.dict()
     await ws_manager.broadcast_json(payload)
@@ -214,7 +216,17 @@ def import_flows(
 
 
 @app.websocket("/api/v1/ws/alerts")
-async def alerts_ws(websocket: WebSocket):
+async def alerts_ws(websocket: WebSocket, token: Optional[str] = None):
+    # Browser WebSocket API cannot set custom headers, so the JWT is sent
+    # as a query param: ws://host/api/v1/ws/alerts?token=<jwt>
+    from src.api.auth.security import decode_access_token
+    try:
+        if not token:
+            raise ValueError("missing token")
+        decode_access_token(token)
+    except Exception:
+        await websocket.close(code=4001)
+        return
     await ws_manager.connect(websocket)
     try:
         while True:
@@ -309,6 +321,12 @@ def cleanup_alerts(
 ):
     deleted = repository.cleanup_old_alerts(older_than_days)
     return {"deleted": deleted, "older_than_days": older_than_days}
+
+
+@app.post("/api/v1/admin/cleanup/all")
+def cleanup_all_alerts(_=Depends(require_roles("admin"))):
+    deleted = repository.delete_all_alerts()
+    return {"deleted": deleted}
 
 
 @app.get("/api/v1/admin/cleanup/preview")
@@ -457,6 +475,7 @@ def _process_pcap_background(
                 source_ip=metadata.get("src_ip", "0.0.0.0"),
                 destination_ip=metadata.get("dst_ip", "0.0.0.0"),
                 protocol=metadata.get("protocol"),
+                dst_port=int(features[0]) if features and len(features) > 0 else None,
                 interface=f"pcap_upload:{Path(filepath).name}",
                 prediction=prediction,
                 label="ATTACK DETECTED" if prediction == 1 else "NORMAL",
@@ -562,3 +581,23 @@ def detection_stop(_=Depends(require_roles("admin"))):
 @app.get("/api/v1/detection/status")
 def detection_status(_=Depends(require_roles("admin", "analyst", "client"))):
     return detection_manager.status()
+
+
+@app.get("/api/v1/detection/interfaces")
+def detection_interfaces(_=Depends(require_roles("admin"))):
+    from src.detection.collector import TrafficCollector
+    return TrafficCollector.get_available_interfaces()
+
+
+@app.post("/api/v1/admin/reclassify-attacks")
+def reclassify_attack_types(_=Depends(require_roles("admin"))):
+    """
+    Re-run the attack-type classifier over every stored alert that currently
+    has attack_type = 'intrusion' (or NULL).  Raw flow features are not
+    stored, so we re-derive the category from the fields we DO have:
+    confidence, severity, triage_action, and label — the same signals the
+    classifier produces downstream.  This lets existing data benefit from
+    classifier improvements without re-uploading PCAPs.
+    """
+    updated = repository.reclassify_intrusion_alerts()
+    return {"reclassified": updated}

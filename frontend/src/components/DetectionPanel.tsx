@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, AlertTriangle, Play, Square, Wifi, WifiOff } from 'lucide-react';
-import { useState } from 'react';
-import { getDetectionStatus, startDetection, stopDetection } from '../api/client';
-import type { DetectionStatus } from '../types';
+import { Activity, AlertTriangle, ChevronDown, Play, Square, Wifi, WifiOff } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { getDetectionStatus, getInterfaces, startDetection, stopDetection } from '../api/client';
+import type { DetectionStatus, NetworkInterface } from '../types';
 
 function fmt(iso: string | null): string {
   if (!iso) return '—';
@@ -20,7 +20,7 @@ function StatItem({ label, value }: { label: string; value: string | number }) {
 
 export function DetectionPanel() {
   const queryClient = useQueryClient();
-  const [iface, setIface] = useState('');
+  const [selectedDevice, setSelectedDevice] = useState('');
   const [busy, setBusy] = useState(false);
 
   const { data: status } = useQuery<DetectionStatus>({
@@ -30,12 +30,26 @@ export function DetectionPanel() {
     retry: false,
   });
 
+  const { data: interfaces = [] } = useQuery<NetworkInterface[]>({
+    queryKey: ['detection-interfaces'],
+    queryFn: getInterfaces,
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  // Auto-select when exactly one interface is available
+  useEffect(() => {
+    if (interfaces.length === 1 && !selectedDevice) {
+      setSelectedDevice(interfaces[0].device);
+    }
+  }, [interfaces, selectedDevice]);
+
   const running = status?.running ?? false;
 
   async function handleStart() {
     setBusy(true);
     try {
-      const next = await startDetection(iface.trim() || undefined);
+      const next = await startDetection(selectedDevice || undefined);
       queryClient.setQueryData(['detection-status'], next);
     } finally {
       setBusy(false);
@@ -95,12 +109,33 @@ export function DetectionPanel() {
       {/* Controls */}
       <div className="flex items-center gap-3">
         {!running && (
-          <input
-            value={iface}
-            onChange={(e) => setIface(e.target.value)}
-            placeholder="Interface (optional)"
-            className="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-          />
+          <div className="relative flex-1">
+            <select
+              value={selectedDevice}
+              onChange={(e) => setSelectedDevice(e.target.value)}
+              className="w-full appearance-none rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 pr-8 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+            >
+              {interfaces.length === 0 ? (
+                <option value="">Loading interfaces…</option>
+              ) : (
+                <>
+                  {interfaces.length > 1 && (
+                    <option value="">Select interface…</option>
+                  )}
+                  {interfaces.map((iface) => (
+                    <option key={iface.device} value={iface.device}>
+                      {iface.name}
+                      {iface.description && iface.description !== iface.name
+                        ? ` — ${iface.description}`
+                        : ''}
+                      {iface.status.toLowerCase() === 'up' ? '' : ` (${iface.status})`}
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+          </div>
         )}
         {running ? (
           <button
@@ -114,7 +149,7 @@ export function DetectionPanel() {
         ) : (
           <button
             onClick={handleStart}
-            disabled={busy}
+            disabled={busy || (!selectedDevice && interfaces.length > 0)}
             className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-50"
           >
             <Play className="h-3 w-3" />

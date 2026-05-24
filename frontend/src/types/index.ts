@@ -18,6 +18,10 @@ export interface Alert {
   triage_action: string;
   is_malicious: boolean;
   attack_type?: string | null;
+  /** "signature" = deterministic rule hit, "model" = CNN-BiLSTM prediction */
+  detection_source?: 'signature' | 'model' | null;
+  /** Free-text rationale (only present for signature hits) */
+  detection_reason?: string | null;
   dedup_count?: number;
   shap_top_features: ShapInsight[];
 }
@@ -117,6 +121,13 @@ export interface UserRecord {
   is_active: boolean;
   created_at: string;
   roles: string[];
+}
+
+export interface NetworkInterface {
+  name: string;
+  description: string;
+  device: string;
+  status: string;
 }
 
 export interface PcapJob {

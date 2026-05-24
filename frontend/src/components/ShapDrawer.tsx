@@ -18,6 +18,10 @@ export function ShapDrawer({ alert, onClose }: Props) {
   }, [onClose]);
 
   const maxImpact = Math.max(...(alert.shap_top_features.map((f) => f.impact)), 0.001);
+  const isSignature = alert.detection_source === 'signature';
+  const explanationTitle = isSignature
+    ? 'Rule Evidence (signature match)'
+    : 'Top SHAP Feature Contributions (model attribution)';
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -59,11 +63,34 @@ export function ShapDrawer({ alert, onClose }: Props) {
             ))}
           </div>
 
+          {/* Detection source badge + rule reason */}
+          {alert.detection_source && (
+            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">Detection source</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                    isSignature
+                      ? 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30'
+                      : 'bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/30'
+                  }`}
+                >
+                  {isSignature ? 'Signature Rule' : 'ML Model'}
+                </span>
+              </div>
+              {alert.detection_reason && (
+                <p className="mt-2 font-mono text-xs text-slate-300 break-words">
+                  {alert.detection_reason}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* SHAP features */}
           {alert.shap_top_features.length > 0 && (
             <div>
               <h3 className="mb-3 text-sm font-semibold text-slate-300">
-                Top SHAP Feature Contributions
+                {explanationTitle}
               </h3>
               <div className="space-y-3">
                 {alert.shap_top_features.map((f) => {

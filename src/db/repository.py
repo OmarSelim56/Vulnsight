@@ -134,11 +134,12 @@ class AlertRepository:
                     return True
 
     def get_recent_alerts(self, limit: int = 100) -> List[AlertPayload]:
+        from src.detection.classifier import infer_attack_type_from_label
         query_limit = max(1, min(limit, 5000))
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT payload_json
+                SELECT payload_json, attack_type AS db_attack_type
                 FROM alerts
                 ORDER BY id DESC
                 LIMIT ?
@@ -146,9 +147,23 @@ class AlertRepository:
                 (query_limit,),
             ).fetchall()
 
-        payloads = [json.loads(r["payload_json"]) for r in rows]
+        payloads = []
+        for r in rows:
+            p = json.loads(r["payload_json"])
+            current = p.get("attack_type") or ""
+            # Re-derive from label when attack_type is missing, unknown, or the
+            # generic intrusion catch-all — the stored label often carries the
+            # specific attack name (e.g. "DDoS DETECTED", "PORT SCAN DETECTED")
+            if current in ("", "unknown", "intrusion", None):
+                label      = p.get("label", "")
+                malicious  = bool(p.get("is_malicious", False))
+                derived    = infer_attack_type_from_label(label, malicious)
+                if derived not in ("intrusion", "normal", ""):
+                    p["attack_type"] = derived
+            payloads.append(p)
+
         payloads.reverse()
-        return [AlertPayload(**payload) for payload in payloads]
+        return [AlertPayload(**p) for p in payloads]
 
     def import_flows_as_alerts(self, limit: int = 1000) -> int:
         """
@@ -321,18 +336,18 @@ class AlertRepository:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT json_extract(payload_json, '$.protocol') AS proto,
+                SELECT json_extract(payload_json, '$.dst_port') AS port,
                        COUNT(*) AS count
                 FROM alerts
                 WHERE is_malicious = 1
-                  AND json_extract(payload_json, '$.protocol') IS NOT NULL
-                GROUP BY proto
+                  AND json_extract(payload_json, '$.dst_port') IS NOT NULL
+                GROUP BY port
                 ORDER BY count DESC
                 LIMIT ?
                 """,
                 (limit,),
             ).fetchall()
-        return [{"protocol": r["proto"], "count": r["count"]} for r in rows]
+        return [{"port": r["port"], "count": r["count"]} for r in rows]
 
     def get_severity_breakdown(self) -> List[Dict[str, Any]]:
         """Count of alerts per severity level (info excluded)."""
@@ -356,6 +371,66 @@ class AlertRepository:
             }
             for r in rows
         ]
+
+    def reclassify_intrusion_alerts(self) -> int:
+        """
+        Re-derive attack_type for stored alerts that are stuck as 'intrusion'
+        or NULL.  Raw flow features are not persisted, so we use a heuristic
+        built from the fields that ARE stored:
+
+          - confidence + severity  → signal strength
+          - triage_action          → encodes the original severity bucket
+          - source_ip / dst_ip     → (reserved for future geo / reputation)
+
+        The logic mirrors the classifier but uses only derived fields:
+
+          isolate_host_immediately  (critical, conf ≥ 0.95) → likely volumetric → ddos
+          investigate_now           (high,     conf ≥ 0.89) → mix, default c2_beacon
+          review_packet_context     (medium,   conf ≥ 0.78) → borderline → port_scan
+          monitor_and_revalidate    (low,      defensive)   → c2_beacon
+
+        Returns the number of rows updated.
+        """
+        rows_to_update = []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, severity, confidence, triage_action
+                FROM alerts
+                WHERE is_malicious = 1
+                  AND (attack_type = 'intrusion' OR attack_type IS NULL)
+                """,
+            ).fetchall()
+
+        for row in rows:
+            sev    = row["severity"] or ""
+            conf   = float(row["confidence"] or 0)
+            action = row["triage_action"] or ""
+
+            if sev == "critical" or action == "isolate_host_immediately":
+                new_type = "ddos"
+            elif sev == "high" and conf >= 0.92:
+                new_type = "ddos"
+            elif sev == "high":
+                new_type = "c2_beacon"
+            elif sev == "medium":
+                new_type = "port_scan"
+            else:
+                new_type = "c2_beacon"
+
+            rows_to_update.append((new_type, row["id"]))
+
+        if not rows_to_update:
+            return 0
+
+        with self._connect() as conn:
+            conn.executemany(
+                "UPDATE alerts SET attack_type = ? WHERE id = ?",
+                rows_to_update,
+            )
+            conn.commit()
+
+        return len(rows_to_update)
 
     def get_attack_type_breakdown(self) -> List[Dict[str, Any]]:
         """Count of alerts per attack_type."""
@@ -450,6 +525,14 @@ class AlertRepository:
                     "DELETE FROM alerts WHERE timestamp < datetime('now', '-' || ? || ' days')",
                     (older_than_days,),
                 )
+                conn.commit()
+                return cur.rowcount
+
+    def delete_all_alerts(self) -> int:
+        """Delete every alert row. Returns deleted count."""
+        with self._lock:
+            with self._connect() as conn:
+                cur = conn.execute("DELETE FROM alerts")
                 conn.commit()
                 return cur.rowcount
 

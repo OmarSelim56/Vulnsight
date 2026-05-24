@@ -21,8 +21,10 @@ is high (typically 0.78+), genuine attacks usually score very close to
 """
 
 import json
-from collections import deque
+import time
+from collections import defaultdict, deque
 from pathlib import Path
+from typing import Optional
 
 import joblib
 import numpy as np
@@ -48,11 +50,16 @@ class InferenceEngine:
         else:
             self.device = torch.device(device)
 
-        # 2. Scaler (must be the same one fitted during training)
+        # 2. Preprocessing pipeline (must be the same fitted during training).
+        # train.py saves an sklearn Pipeline:
+        #   PowerTransformer(yeo-johnson) -> StandardScaler
+        # both transforms must run identically at inference, otherwise we
+        # recreate the same train/deploy distribution gap that broke the
+        # earlier 20-feature model on live nfstream traffic.
         self.scaler = joblib.load(scaler_path)
 
         # 3. Model architecture + trained weights
-        self.model = HybridCNNBiLSTM(feature_size=20).to(self.device)
+        self.model = HybridCNNBiLSTM(feature_size=len(FEATURE_NAMES)).to(self.device)
         self.model.load_state_dict(torch.load(model_path, map_location=self.device), strict=False)
         self.model.eval()  # disables dropout
 
@@ -62,12 +69,24 @@ class InferenceEngine:
             threshold_path = Path(model_path).parent / "threshold.json"
         self.threshold = self._load_threshold(threshold_path)
 
-        # 5. Sliding window buffer
-        self.window_size  = 10
-        self.flow_buffer  = deque(maxlen=self.window_size)
-        self.feature_size = len(FEATURE_NAMES)
+        # 5. Per-conversation sliding window buffers.
+        #
+        # Each (src_ip, dst_ip) tuple gets its own 10-flow buffer.  This is
+        # critical for live traffic: a global buffer would mix unrelated
+        # concurrent connections (Netflix, Windows Update, attacker traffic)
+        # into the same prediction window, diluting attack signal.  Per-tuple
+        # windows give the model a clean view of each conversation.
+        self.window_size   = 10
+        self.feature_size  = len(FEATURE_NAMES)
+        self.flow_buffers  = defaultdict(lambda: deque(maxlen=self.window_size))
+        self.last_seen     = {}
+        self.max_tuples    = 5000
+        # Backward-compatible alias used by callers that don't pass metadata
+        # (e.g. simulate.py replaying sequential CSV rows).
+        self.flow_buffer   = self.flow_buffers[("__global__", "__global__")]
 
-        # 6. SHAP state (optional explainability)
+        # 6. SHAP state (optional explainability) — kept global since SHAP
+        # needs a pool of background windows from across the traffic mix.
         self.use_shap            = use_shap and shap is not None
         self.background_windows  = deque(maxlen=50)
 
@@ -88,9 +107,18 @@ class InferenceEngine:
 
     # ── main entry ──────────────────────────────────────────────────────────
 
-    def process_flow(self, raw_features):
+    def process_flow(self, raw_features, meta: Optional[dict] = None):
         """
         Score a single flow.
+
+        Parameters
+        ----------
+        raw_features : list[float]
+            The 20 nfstream-derived features in FEATURE_NAMES order.
+        meta : dict, optional
+            Flow metadata.  When present, the (src_ip, dst_ip) tuple is used
+            to select a per-conversation sliding window.  When absent
+            (e.g. CSV replay), all flows share the global buffer.
 
         Returns
         -------
@@ -98,7 +126,8 @@ class InferenceEngine:
             prediction : 0 = benign, 1 = malicious
             confidence : probability of the predicted class (0..1)
                          high values indicate a strong, trustworthy decision
-            (None, 0.0) is returned during the 10-flow warm-up window.
+            (None, 0.0) is returned while the conversation is still in its
+            10-flow warm-up window.
         """
         # A. Scale the raw features.
         #    The scaler was fitted on a plain numpy array (no feature names),
@@ -107,15 +136,23 @@ class InferenceEngine:
         features_array  = np.asarray([raw_features], dtype=np.float32)
         scaled_features = self.scaler.transform(features_array)[0]
 
-        # B. Append to sliding window
-        self.flow_buffer.append(scaled_features)
+        # B. Select per-conversation buffer (or global when no metadata).
+        if meta is not None and meta.get("src_ip") and meta.get("dst_ip"):
+            key = (str(meta["src_ip"]), str(meta["dst_ip"]))
+        else:
+            key = ("__global__", "__global__")
 
-        # C. Wait until we have 10 flows before predicting
-        if len(self.flow_buffer) < self.window_size:
+        buffer = self.flow_buffers[key]
+        buffer.append(scaled_features)
+        self.last_seen[key] = time.time()
+        self._maybe_evict()
+
+        # C. Wait until this conversation has 10 flows before predicting.
+        if len(buffer) < self.window_size:
             return None, 0.0
 
         # D. Build (1, 10, 20) input tensor
-        current_window = np.array(list(self.flow_buffer), dtype=np.float32)
+        current_window = np.array(list(buffer), dtype=np.float32)
         self.background_windows.append(current_window.flatten())
         input_tensor = torch.from_numpy(np.array([current_window], dtype=np.float32)).to(self.device)
 
@@ -135,6 +172,25 @@ class InferenceEngine:
             confidence = ben_prob   # how certain are we it's benign
 
         return prediction, confidence
+
+    # ── Per-tuple buffer eviction ───────────────────────────────────────────
+
+    def _maybe_evict(self) -> None:
+        """Cap memory by dropping conversation buffers that have gone idle."""
+        if len(self.flow_buffers) <= self.max_tuples:
+            return
+        # Evict tuples not touched in the last 5 minutes.
+        cutoff = time.time() - 300
+        stale  = [k for k, t in self.last_seen.items() if t < cutoff]
+        for k in stale:
+            self.flow_buffers.pop(k, None)
+            self.last_seen.pop(k, None)
+        # Still over the cap?  Drop the oldest 10% by last-seen time.
+        if len(self.flow_buffers) > self.max_tuples:
+            ordered = sorted(self.last_seen.items(), key=lambda x: x[1])
+            for k, _ in ordered[: len(ordered) // 10]:
+                self.flow_buffers.pop(k, None)
+                self.last_seen.pop(k, None)
 
     # ── SHAP explainability ─────────────────────────────────────────────────
 

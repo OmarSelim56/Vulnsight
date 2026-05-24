@@ -15,6 +15,7 @@ class AlertPayload(BaseModel):
     source_ip: str
     destination_ip: str
     protocol: Optional[int] = None
+    dst_port: Optional[int] = None
     interface: Optional[str] = None
     prediction: int
     label: str
@@ -24,6 +25,12 @@ class AlertPayload(BaseModel):
     triage_action: str
     is_malicious: bool
     attack_type: Optional[str] = None
+    # "signature" = deterministic rule hit (high precision, known coverage)
+    # "model"     = CNN-BiLSTM ML prediction (probabilistic, may catch novel)
+    # None        = legacy/imported alert with unknown provenance
+    detection_source: Optional[str] = None
+    # Free-text explanation of WHY a rule fired (signature alerts only).
+    detection_reason: Optional[str] = None
     dedup_count: int = 1
     shap_top_features: List[ShapInsight] = Field(default_factory=list)
 

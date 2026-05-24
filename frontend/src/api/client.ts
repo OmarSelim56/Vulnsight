@@ -1,7 +1,7 @@
 import type {
   Alert, AttackTypeBreakdown, DetectionStatus, HealthResponse,
-  PcapJob, Report, SavedReport, SeverityBreakdown, Thresholds, TimelinePoint,
-  TokenResponse, TopAttacker, UserInfo, UserRecord,
+  NetworkInterface, PcapJob, Report, SavedReport, SeverityBreakdown,
+  Thresholds, TimelinePoint, TokenResponse, TopAttacker, UserInfo, UserRecord,
 } from '../types';
 
 const BASE = '/api/v1';
@@ -92,6 +92,12 @@ export const startDetection = (iface?: string) =>
 export const stopDetection = () =>
   request<DetectionStatus>('/detection/stop', { method: 'POST' });
 
+export const getInterfaces = () =>
+  request<NetworkInterface[]>('/detection/interfaces');
+
+export const reclassifyAttacks = () =>
+  request<{ reclassified: number }>('/admin/reclassify-attacks', { method: 'POST' });
+
 // Analytics
 export const getTimeline = (hours = 24) =>
   request<TimelinePoint[]>(`/analytics/timeline?hours=${hours}`);
@@ -142,20 +148,19 @@ export const getReportHistory = (limit = 50) =>
 export const deleteReport = (id: number) =>
   request<{ deleted: boolean }>(`/reports/${id}`, { method: 'DELETE' });
 
-export const downloadReport = (id: number) => {
+export const downloadReport = async (id: number): Promise<void> => {
   const token = localStorage.getItem('vs_token');
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  fetch(`/api/v1/reports/${id}/download`, { headers })
-    .then((r) => r.blob())
-    .then((blob) => {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `vulnsight_report_${id}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    });
+  const r = await fetch(`/api/v1/reports/${id}/download`, { headers });
+  if (!r.ok) throw new Error(`Download failed: ${r.status} ${r.statusText}`);
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `vulnsight_report_${id}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
 };
 
 // Alert cleanup / retention
@@ -167,6 +172,9 @@ export const runCleanup = (days: number) =>
     `/admin/cleanup?older_than_days=${days}`,
     { method: 'POST' },
   );
+
+export const runCleanupAll = () =>
+  request<{ deleted: number }>('/admin/cleanup/all', { method: 'POST' });
 
 // User management
 export const listUsers = () => request<UserRecord[]>('/admin/users');
@@ -187,23 +195,18 @@ export const updateUserRoles = (id: number, roles: string[]) =>
   });
 
 // CSV export (triggers browser download)
-export function downloadCsv(limit = 5000) {
+export async function downloadCsv(limit = 5000): Promise<void> {
   const token = localStorage.getItem('vs_token');
   const url = `/api/v1/reports/export/csv?limit=${limit}`;
-  const a = document.createElement('a');
-  a.href = token
-    ? url  // Token sent via header — open via fetch instead for auth
-    : url;
-  // Use fetch to include auth header, then trigger download
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  fetch(url, { headers })
-    .then((r) => r.blob())
-    .then((blob) => {
-      const blobUrl = URL.createObjectURL(blob);
-      a.href = blobUrl;
-      a.download = `vulnsight_alerts_${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    });
+  const r = await fetch(url, { headers });
+  if (!r.ok) throw new Error(`CSV export failed: ${r.status} ${r.statusText}`);
+  const blob = await r.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  a.download = `vulnsight_alerts_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(blobUrl);
 }

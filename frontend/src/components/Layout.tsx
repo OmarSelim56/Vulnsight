@@ -26,8 +26,8 @@ export const useLiveAlerts = () => useContext(LiveCtx);
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
-  { to: '/alerts', label: 'Alerts', icon: Bell },
   { to: '/live', label: 'Live Traffic', icon: Radio },
+  { to: '/alerts', label: 'Alerts', icon: Bell },
   { to: '/reports', label: 'Reports', icon: BarChart3 },
   { to: '/model', label: 'Model', icon: Brain },
   { to: '/settings', label: 'Settings', icon: Settings, adminOnly: true },

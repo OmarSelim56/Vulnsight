@@ -1,16 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
+import { toCanvas } from 'html-to-image';
+import { jsPDF } from 'jspdf';
 import {
-  Activity, BarChart3, Download, FileText, RefreshCw,
+  Activity, BarChart3, Download, FileText, Loader2, RefreshCw,
   ShieldAlert, Swords, Target, Trash2, TrendingUp,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Bar, BarChart, CartesianGrid, Cell, Legend,
   Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import {
-  deleteReport, downloadCsv, downloadReport,
+  deleteReport, downloadCsv,
   generateReport, getAttackTypes, getReportHistory, ApiError,
 } from '../api/client';
 import type { Report, SavedReport } from '../types';
@@ -64,7 +66,13 @@ function Metric({
 
 // ─── Report History table ─────────────────────────────────────────────────────
 
-function ReportHistoryTable() {
+function ReportHistoryTable({
+  onDownload,
+  pdfLoading,
+}: {
+  onDownload: (id: number, generatedAt: string) => void;
+  pdfLoading: boolean;
+}) {
   const queryClient = useQueryClient();
 
   const { data: history = [], isLoading } = useQuery<SavedReport[]>({
@@ -121,11 +129,12 @@ function ReportHistoryTable() {
               <td className="py-3">
                 <div className="flex items-center gap-2 opacity-0 transition group-hover:opacity-100">
                   <button
-                    onClick={() => downloadReport(r.id)}
-                    title="Download JSON"
-                    className="rounded p-1 text-slate-400 hover:text-cyan-400"
+                    onClick={() => onDownload(r.id, r.generated_at)}
+                    title="Download PDF"
+                    disabled={pdfLoading}
+                    className="rounded p-1 text-slate-400 hover:text-cyan-400 disabled:opacity-40"
                   >
-                    <Download className="h-3.5 w-3.5" />
+                    {pdfLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                   </button>
                   <button
                     onClick={() => remove(r.id)}
@@ -148,11 +157,13 @@ function ReportHistoryTable() {
 
 export function ReportsPage() {
   const queryClient = useQueryClient();
+  const reportRef = useRef<HTMLDivElement>(null);
 
   const [report, setReport] = useState<Report | null>(
     () => queryClient.getQueryData<Report>(['report']) ?? null,
   );
   const [loading, setLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [error, setError] = useState('');
   const [generatedAt, setGeneratedAt] = useState<Date | null>(
     report ? new Date(report.generated_at) : null,
@@ -177,6 +188,137 @@ export function ReportsPage() {
       setError(err instanceof ApiError ? err.message : 'Failed to generate report');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // ── Core PDF renderer — converts the live reportRef DOM node to PDF ────────
+  const renderPDF = async (filename: string) => {
+    if (!reportRef.current) throw new Error('Report not rendered');
+
+    const PDF_W  = 297;  // A4 landscape mm
+    const PDF_H  = 210;
+    const MARGIN = 10;
+    const PIXEL_RATIO = 2;
+
+    const el = reportRef.current;
+
+    // Collect child-element top offsets BEFORE capturing canvas so the DOM
+    // is in its natural scroll position.  These become our break candidates.
+    const containerTop = el.getBoundingClientRect().top;
+    const childBreaks: number[] = Array.from(el.children).map((child) => {
+      const top = child.getBoundingClientRect().top - containerTop;
+      return Math.round(top * PIXEL_RATIO);
+    });
+
+    const canvas = await toCanvas(el, {
+      pixelRatio: PIXEL_RATIO,
+      backgroundColor: '#020617',
+      width: el.scrollWidth,
+      height: el.scrollHeight,
+    });
+
+    const totalCanvasH = canvas.height;
+    const pdf          = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+    const contentW     = PDF_W - MARGIN * 2;
+    const pxPerMm      = canvas.width / contentW;
+    const pageH_px     = Math.round((PDF_H - MARGIN * 2 - 8) * pxPerMm); // 8mm footer
+
+    // ── Smart break points using real element boundaries ──────────────────
+    // For each ideal cut, pick the child boundary that is closest to (but
+    // does not exceed) the cut. This guarantees breaks happen between cards,
+    // never through a table row or chart.
+    const findBreak = (idealCutY: number): number => {
+      let best = 0;
+      for (const b of childBreaks) {
+        if (b <= idealCutY && b > best) best = b;
+      }
+      // If no child boundary found within half a page, fall back to ideal cut
+      return best > idealCutY - pageH_px * 0.5 ? best : idealCutY;
+    };
+
+    // Pre-compute all page slices
+    const breaks: number[] = [0];
+    let pos = 0;
+    while (pos < totalCanvasH) {
+      const ideal = pos + pageH_px;
+      if (ideal >= totalCanvasH) break;
+      const cut = findBreak(ideal);
+      // Guard against infinite loop if findBreak returns same pos
+      if (cut <= pos) { breaks.push(pos + pageH_px); pos = pos + pageH_px; continue; }
+      breaks.push(cut);
+      pos = cut;
+    }
+    breaks.push(totalCanvasH);
+
+    const totalPages = breaks.length - 1;
+
+    for (let page = 0; page < totalPages; page++) {
+      if (page > 0) pdf.addPage();
+
+      pdf.setFillColor(2, 6, 23);
+      pdf.rect(0, 0, PDF_W, PDF_H, 'F');
+
+      const srcY = breaks[page];
+      const srcH = breaks[page + 1] - srcY;
+
+      const slice    = document.createElement('canvas');
+      slice.width    = canvas.width;
+      slice.height   = srcH;
+      const sliceCtx = slice.getContext('2d')!;
+      sliceCtx.drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH);
+
+      pdf.addImage(slice.toDataURL('image/jpeg', 0.94), 'JPEG', MARGIN, MARGIN, contentW, srcH / pxPerMm);
+
+      pdf.setFontSize(7);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text(
+        `VulnSight — Threat Intelligence Report  •  Page ${page + 1} of ${totalPages}`,
+        PDF_W / 2, PDF_H - 4, { align: 'center' },
+      );
+    }
+
+    pdf.save(filename);
+  };
+
+  const handleExportPDF = async () => {
+    setPdfLoading(true);
+    setError('');
+    try {
+      const filename = `vulnsight_report_${format(generatedAt ?? new Date(), 'yyyy-MM-dd_HHmm')}.pdf`;
+      await renderPDF(filename);
+    } catch (err) {
+      setError(`PDF export failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  // ── History row: load saved report then export as PDF ───────────────────────
+  const handleHistoryDownload = async (id: number, generatedAtStr: string) => {
+    setPdfLoading(true);
+    setError('');
+    try {
+      const token = localStorage.getItem('vs_token') ?? '';
+      const res   = await fetch(`/api/v1/reports/${id}/download`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const data: Report = await res.json();
+
+      // Load the historical report into the view so reportRef renders it
+      setReport(data);
+      setGeneratedAt(new Date(generatedAtStr));
+
+      // Wait one frame for React to commit the new report to the DOM
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+      const ts      = format(new Date(generatedAtStr), 'yyyy-MM-dd_HHmm');
+      const filename = `vulnsight_report_${ts}.pdf`;
+      await renderPDF(filename);
+    } catch (err) {
+      setError(`PDF export failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setPdfLoading(false);
     }
   };
 
@@ -218,16 +360,20 @@ export function ReportsPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => downloadCsv()}
+            onClick={() => downloadCsv().catch((e) => setError(e.message))}
             className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-sm text-slate-300 hover:border-slate-600 hover:text-white transition"
           >
             <Download className="h-3.5 w-3.5" />
             CSV
           </button>
           <button
-            onClick={() => window.print()}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-sm text-slate-300 hover:border-slate-600 hover:text-white transition"
+            onClick={handleExportPDF}
+            disabled={!report || pdfLoading}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-sm text-slate-300 hover:border-slate-600 hover:text-white transition disabled:opacity-40"
           >
+            {pdfLoading
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <Download className="h-3.5 w-3.5" />}
             PDF
           </button>
           <button
@@ -266,7 +412,7 @@ export function ReportsPage() {
 
       {/* ── Report content ── */}
       {report && (
-        <>
+        <div ref={reportRef} className="space-y-6">
           {/* Timestamp + threat score banner */}
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/60 px-6 py-4">
             <div>
@@ -403,7 +549,7 @@ export function ReportsPage() {
               </table>
             </div>
           )}
-        </>
+        </div>
       )}
 
       {/* ── Report History ── */}
@@ -412,7 +558,7 @@ export function ReportsPage() {
           <FileText className="h-4 w-4 text-slate-500" />
           <h2 className="text-sm font-semibold text-slate-200">Report History</h2>
         </div>
-        <ReportHistoryTable />
+        <ReportHistoryTable onDownload={handleHistoryDownload} pdfLoading={pdfLoading} />
       </div>
     </div>
   );

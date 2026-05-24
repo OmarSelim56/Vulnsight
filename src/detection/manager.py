@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,11 +41,18 @@ class DetectionStatus:
 
 
 class DetectionManager:
+    # In-memory broadcast dedup — shorter than DB dedup so the live stream
+    # shows a heartbeat of ongoing activity (one event every N seconds per
+    # src/dst/attack-type tuple) instead of flooding with every flow.
+    BROADCAST_DEDUP_BENIGN_SECONDS    = 10
+    BROADCAST_DEDUP_MALICIOUS_SECONDS = 15
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._status = DetectionStatus()
+        self._broadcast_seen: Dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -109,9 +117,12 @@ class DetectionManager:
             from src.detection.collector import TrafficCollector
             from src.detection.engine import InferenceEngine
             from src.detection.classifier import classify_attack_type
+            from src.detection.signatures import SignatureEngine
         except Exception as exc:
             self._set_error(f"Import failed: {exc}")
             return
+
+        signatures = SignatureEngine()
 
         model_path = str(_PROJECT_ROOT / "model" / "vulnsight_cnn_bilstm.pth")
         scaler_path = str(_PROJECT_ROOT / "model" / "scaler.pkl")
@@ -146,25 +157,51 @@ class DetectionManager:
                     self._status.flows_processed += 1
                     self._status.last_flow_at = datetime.now(timezone.utc).isoformat()
 
-                # Engine applies the tuned threshold (from model/threshold.json) internally.
-                # No second-pass thresholding here — the trained operating point is the
-                # source of truth, and re-thresholding from the DB silently broke
-                # detections when the slider was set above the trained value.
-                prediction, confidence = engine.process_flow(features)
-                if prediction is None:
-                    continue
+                # ── First pass: signature engine ────────────────────────
+                # Deterministic detection for well-known attack patterns
+                # (port scans, floods, brute force).  Catches the obvious
+                # 80% without depending on the model's distribution matching
+                # live traffic.
+                sig_match = signatures.check(features, metadata)
 
-                with self._lock:
-                    self._status.predictions_made += 1
+                if sig_match is not None:
+                    prediction       = 1
+                    confidence       = sig_match["confidence"]
+                    attack_type      = sig_match["attack_type"]
+                    label_text       = f"{attack_type.upper().replace('_', ' ')} DETECTED"
+                    detection_source = "signature"
+                    detection_reason = sig_match.get("reason")
+                    # Signature alerts surface per-rule feature evidence in
+                    # the same shape SHAP produces, so the UI explanation
+                    # drawer renders identically for both detection sources.
+                    shap_features: List[Dict] = list(sig_match.get("evidence") or [])
+                    with self._lock:
+                        self._status.predictions_made += 1
+                else:
+                    # ── Second pass: ML model ───────────────────────────
+                    # Engine applies the tuned threshold internally.  Per-
+                    # conversation windowing means each (src, dst) tuple gets
+                    # its own 10-flow buffer instead of mixing with concurrent
+                    # unrelated traffic.
+                    prediction, confidence = engine.process_flow(features, metadata)
+                    if prediction is None:
+                        continue
 
-                shap_features: List[Dict] = []
-                if prediction == 1:
-                    try:
-                        shap_features = engine.explain_latest_window(top_k=5)
-                    except Exception:
-                        pass
+                    with self._lock:
+                        self._status.predictions_made += 1
 
-                attack_type = classify_attack_type(features, prediction == 1)
+                    shap_features = []
+                    if prediction == 1:
+                        try:
+                            shap_features = engine.explain_latest_window(top_k=5)
+                        except Exception:
+                            pass
+
+                    attack_type      = classify_attack_type(features, prediction == 1)
+                    label_text       = "ATTACK DETECTED" if prediction == 1 else "NORMAL"
+                    detection_source = "model"
+                    detection_reason = None
+
                 meta = _classify(prediction, confidence)
                 now = datetime.now(timezone.utc)
 
@@ -175,15 +212,18 @@ class DetectionManager:
                     source_ip=metadata.get("src_ip", "0.0.0.0"),
                     destination_ip=metadata.get("dst_ip", "0.0.0.0"),
                     protocol=metadata.get("protocol"),
+                    dst_port=int(features[0]) if features and len(features) > 0 else None,
                     interface=metadata.get("interface") or collector.interface,
                     prediction=prediction,
-                    label="ATTACK DETECTED" if prediction == 1 else "NORMAL",
+                    label=label_text,
                     confidence=float(confidence),
                     confidence_level=meta["confidence_level"],
                     severity=meta["severity"],
                     triage_action=meta["triage_action"],
                     is_malicious=prediction == 1,
                     attack_type=attack_type,
+                    detection_source=detection_source,
+                    detection_reason=detection_reason,
                     shap_top_features=[
                         ShapInsight(
                             feature=f.get("feature", ""),
@@ -196,13 +236,21 @@ class DetectionManager:
 
                 try:
                     dedup_window = int(repository.get_setting("dedup_window_seconds") or 60)
-                    is_new = repository.save_alert_with_dedup(alert, window_seconds=dedup_window)
+                    repository.save_alert_with_dedup(alert, window_seconds=dedup_window)
                 except Exception as exc:
                     logger.warning("DetectionManager: save_alert failed: %s", exc)
-                    is_new = True
 
-                # Only broadcast truly new (non-deduplicated) alerts over WS
-                if is_new:
+                # Broadcast dedup — keep the live stream readable.  Without
+                # this a port scan or DDoS burst produces hundreds of
+                # identical events per second.  Each src/dst/attack tuple
+                # broadcasts at most once per window; malicious events use a
+                # slightly longer window so toast notifications don't repeat.
+                if self._should_broadcast(
+                    metadata.get("src_ip", ""),
+                    metadata.get("dst_ip", ""),
+                    attack_type,
+                    is_malicious=prediction == 1,
+                ):
                     payload = alert.model_dump(mode="json")
                     asyncio.run_coroutine_threadsafe(
                         ws_manager.broadcast_json(payload), loop
@@ -220,6 +268,30 @@ class DetectionManager:
         with self._lock:
             self._status.running = False
         logger.info("DetectionManager: stopped")
+
+    def _should_broadcast(
+        self, src_ip: str, dst_ip: str, attack_type: str, is_malicious: bool
+    ) -> bool:
+        """Throttle WebSocket broadcasts so identical events don't flood the
+        live stream or trigger repeated toasts during attack bursts."""
+        window = (
+            self.BROADCAST_DEDUP_MALICIOUS_SECONDS
+            if is_malicious
+            else self.BROADCAST_DEDUP_BENIGN_SECONDS
+        )
+        key = f"{src_ip}|{dst_ip}|{attack_type}"
+        now_ts = time.time()
+        last = self._broadcast_seen.get(key, 0.0)
+        if now_ts - last < window:
+            return False
+        self._broadcast_seen[key] = now_ts
+        # Opportunistic GC so the map doesn't grow unbounded over long runs.
+        if len(self._broadcast_seen) > 10_000:
+            cutoff = now_ts - 300
+            self._broadcast_seen = {
+                k: t for k, t in self._broadcast_seen.items() if t >= cutoff
+            }
+        return True
 
     def _set_error(self, msg: str) -> None:
         logger.error("DetectionManager: %s", msg)

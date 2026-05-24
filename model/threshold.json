@@ -1,0 +1,89 @@
+{
+  "threshold": 0.76,
+  "val_f1": 0.9962,
+  "feature_set": "v2_34_tool_agnostic",
+  "test_metrics": {
+    "accuracy": 0.998453,
+    "precision": 0.996019,
+    "recall": 0.996127,
+    "f1": 0.996073,
+    "fpr": 0.000977,
+    "tp": 83323,
+    "tn": 340621,
+    "fp": 333,
+    "fn": 324
+  },
+  "per_attack_recall": {
+    "Web Attack \ufffd Sql Injection": {
+      "total": 3,
+      "caught": 0,
+      "recall": 0.0
+    },
+    "Heartbleed": {
+      "total": 2,
+      "caught": 1,
+      "recall": 0.5
+    },
+    "Web Attack \ufffd Brute Force": {
+      "total": 226,
+      "caught": 153,
+      "recall": 0.676991
+    },
+    "Web Attack \ufffd XSS": {
+      "total": 98,
+      "caught": 72,
+      "recall": 0.734694
+    },
+    "Bot": {
+      "total": 295,
+      "caught": 221,
+      "recall": 0.749153
+    },
+    "Infiltration": {
+      "total": 6,
+      "caught": 5,
+      "recall": 0.833333
+    },
+    "SSH-Patator": {
+      "total": 884,
+      "caught": 838,
+      "recall": 0.947964
+    },
+    "DoS GoldenEye": {
+      "total": 1544,
+      "caught": 1518,
+      "recall": 0.983161
+    },
+    "DoS slowloris": {
+      "total": 869,
+      "caught": 862,
+      "recall": 0.991945
+    },
+    "FTP-Patator": {
+      "total": 1190,
+      "caught": 1188,
+      "recall": 0.998319
+    },
+    "PortScan": {
+      "total": 23840,
+      "caught": 23809,
+      "recall": 0.9987
+    },
+    "DoS Slowhttptest": {
+      "total": 825,
+      "caught": 824,
+      "recall": 0.998788
+    },
+    "DoS Hulk": {
+      "total": 34661,
+      "caught": 34630,
+      "recall": 0.999106
+    },
+    "DDoS": {
+      "total": 19204,
+      "caught": 19202,
+      "recall": 0.999896
+    }
+  },
+  "seed": 42
+}

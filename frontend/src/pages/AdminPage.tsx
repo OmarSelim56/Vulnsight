@@ -6,7 +6,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import {
   ApiError, deleteUser, getHealth, getThresholds,
-  getPcapJob, listUsers, previewCleanup, registerUser, runCleanup,
+  getPcapJob, listUsers, previewCleanup, registerUser, runCleanup, runCleanupAll,
   setThresholds, toggleUserActive, updateUserRoles, uploadPcap,
 } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
@@ -115,6 +115,7 @@ function RetentionCard() {
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmAllOpen, setConfirmAllOpen] = useState(false);
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
   const [running, setRunning] = useState(false);
@@ -148,6 +149,24 @@ function RetentionCard() {
       queryClient.invalidateQueries({ queryKey: ['health'] });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Cleanup failed');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const handleCleanupAll = async () => {
+    setRunning(true);
+    setError('');
+    setSuccess('');
+    try {
+      const res = await runCleanupAll();
+      setSuccess(`Deleted all ${res.deleted} alert${res.deleted !== 1 ? 's' : ''} from the database.`);
+      setPreviewCount(null);
+      setConfirmAllOpen(false);
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+      queryClient.invalidateQueries({ queryKey: ['health'] });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Delete all failed');
     } finally {
       setRunning(false);
     }
@@ -243,16 +262,24 @@ function RetentionCard() {
           {previewing ? 'Checking…' : 'Preview'}
         </button>
         <button
-          onClick={() => { setConfirmOpen(true); setSuccess(''); }}
+          onClick={() => { setConfirmOpen(true); setConfirmAllOpen(false); setSuccess(''); }}
           disabled={running}
           className="flex items-center gap-2 rounded-lg bg-red-600/80 px-4 py-2 text-sm font-semibold text-white hover:bg-red-600 disabled:opacity-60 transition"
         >
           <Trash2 className="h-4 w-4" />
           Run Cleanup
         </button>
+        <button
+          onClick={() => { setConfirmAllOpen(true); setConfirmOpen(false); setSuccess(''); }}
+          disabled={running}
+          className="flex items-center gap-2 rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-400 hover:bg-red-500/20 disabled:opacity-60 transition"
+        >
+          <Trash2 className="h-4 w-4" />
+          Delete All
+        </button>
       </div>
 
-      {/* Inline confirmation */}
+      {/* Confirm: run cleanup (older than N days) */}
       {confirmOpen && (
         <div className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-4">
           <p className="text-sm font-semibold text-red-400">
@@ -269,6 +296,31 @@ function RetentionCard() {
             </button>
             <button
               onClick={() => setConfirmOpen(false)}
+              className="rounded-lg border border-slate-700 px-4 py-1.5 text-sm text-slate-400 hover:text-white"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm: delete ALL */}
+      {confirmAllOpen && (
+        <div className="mt-4 rounded-lg border border-red-600/60 bg-red-600/10 px-4 py-4">
+          <p className="text-sm font-semibold text-red-400">Delete every alert in the database?</p>
+          <p className="mt-1 text-xs text-slate-400">
+            This permanently removes <span className="font-semibold text-red-400">all</span> alerts regardless of age. Cannot be undone.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={handleCleanupAll}
+              disabled={running}
+              className="rounded-lg bg-red-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-60"
+            >
+              {running ? 'Deleting…' : 'Delete Everything'}
+            </button>
+            <button
+              onClick={() => setConfirmAllOpen(false)}
               className="rounded-lg border border-slate-700 px-4 py-1.5 text-sm text-slate-400 hover:text-white"
             >
               Cancel
@@ -799,13 +851,13 @@ function ThresholdsCard() {
             Dedup window — <span className="text-cyan-400">{effective.dedup_window_seconds ?? 60} s</span>
           </label>
           <input
-            type="range" min={10} max={600} step={10}
+            type="range" min={10} max={900} step={10}
             value={effective.dedup_window_seconds ?? 60}
             onChange={(e) => setLocal((p) => ({ ...p, dedup_window_seconds: parseInt(e.target.value) }))}
             className="w-full accent-cyan-500"
           />
           <div className="mt-0.5 flex justify-between text-xs text-slate-600">
-            <span>10 s</span><span>600 s</span>
+            <span>10 s</span><span>900 s</span>
           </div>
         </div>
 

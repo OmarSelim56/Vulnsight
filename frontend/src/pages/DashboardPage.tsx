@@ -24,7 +24,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { getAlerts, getAttackTypes, getHealth, getSeverityBreakdown, getTimeline, getTopAttackers } from '../api/client';
+import { getAlerts, getHealth, getSeverityBreakdown, getTimeline, getTopAttackers } from '../api/client';
 import { AlertTable } from '../components/AlertTable';
 import { StatCard } from '../components/StatCard';
 import { useLiveAlerts } from '../components/Layout';
@@ -35,6 +35,15 @@ const SEV_COLORS: Record<string, string> = {
   medium: '#f59e0b',
   low: '#eab308',
   warning: '#a855f7',
+};
+
+const ATTACK_COLORS: Record<string, string> = {
+  ddos:             '#ef4444',
+  port_scan:        '#f97316',
+  brute_force:      '#f59e0b',
+  data_exfiltration:'#a855f7',
+  c2_beacon:        '#ec4899',
+  intrusion:        '#64748b',
 };
 
 // Severity order for chart rendering
@@ -67,12 +76,6 @@ export function DashboardPage() {
     refetchInterval: 60_000,
   });
 
-  const { data: attackTypes = [], refetch: refetchAttackTypes } = useQuery({
-    queryKey: ['attack-types'],
-    queryFn: getAttackTypes,
-    refetchInterval: 60_000,
-  });
-
   const { data: severityData = [], refetch: refetchSeverity } = useQuery({
     queryKey: ['severity-breakdown'],
     queryFn: getSeverityBreakdown,
@@ -84,7 +87,6 @@ export function DashboardPage() {
     refetchAlerts();
     refetchTimeline();
     refetchAttackers();
-    refetchAttackTypes();
     refetchSeverity();
   };
 
@@ -127,7 +129,22 @@ export function DashboardPage() {
       .map(([name, value]) => ({ name, value }));
   }, [allAlerts]);
 
-  const recentAlerts = allAlerts.slice(0, 8);
+  // Attack type breakdown — computed from fetched alerts, intrusion/normal excluded
+  const EXCLUDED_TYPES = new Set(['intrusion', 'normal', 'unknown', null, undefined, '']);
+  const attackTypeData = useMemo(() => {
+    const counts: Record<string, number> = {};
+    allAlerts.forEach((a) => {
+      if (!a.is_malicious) return;
+      const t = a.attack_type ?? '';
+      if (EXCLUDED_TYPES.has(t)) return;
+      counts[t] = (counts[t] ?? 0) + 1;
+    });
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, count]) => ({ type, count }));
+  }, [allAlerts]);
+
+  const recentAlerts = allAlerts.filter((a) => a.is_malicious).slice(0, 8);
   const totalAlerts = health?.counts.alerts ?? 0;
 
   return (
@@ -277,29 +294,38 @@ export function DashboardPage() {
 
         {/* Attack type breakdown */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
-          <h2 className="mb-4 text-sm font-semibold text-slate-200">Attack Types</h2>
-          {attackTypes.length === 0 ? (
-            <div className="flex h-36 items-center justify-center text-sm text-slate-500">No data yet</div>
+          <div className="mb-4 flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4 text-orange-400" />
+            <h2 className="text-sm font-semibold text-slate-200">Attack Categories</h2>
+          </div>
+          {attackTypeData.length === 0 ? (
+            <div className="flex h-36 items-center justify-center text-sm text-slate-500">
+              No classified attacks yet
+            </div>
           ) : (
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={attackTypes} margin={{ left: 8, right: 8, top: 4, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                <XAxis
-                  dataKey="attack_type"
-                  tick={{ fill: '#64748b', fontSize: 10 }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={(v: string) => v.replace(/_/g, ' ')}
-                />
-                <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} width={30} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: 8 }}
-                  itemStyle={{ color: '#e2e8f0' }}
-                  formatter={(v, n) => [v, n === 'event_count' ? 'Events' : n]}
-                />
-                <Bar dataKey="event_count" name="Events" fill="#f97316" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="space-y-2.5">
+              {attackTypeData.map(({ type, count }) => (
+                <div key={type} className="flex items-center gap-3">
+                  <span
+                    className="w-2.5 h-2.5 shrink-0 rounded-full"
+                    style={{ background: ATTACK_COLORS[type] ?? '#64748b' }}
+                  />
+                  <span className="w-28 shrink-0 text-xs font-medium capitalize text-slate-300">
+                    {type.replace(/_/g, ' ')}
+                  </span>
+                  <div className="flex-1 overflow-hidden rounded-full bg-slate-800 h-2">
+                    <div
+                      className="h-2 rounded-full transition-all"
+                      style={{
+                        width: `${Math.min(100, (count / (attackTypeData[0]?.count || 1)) * 100)}%`,
+                        background: ATTACK_COLORS[type] ?? '#64748b',
+                      }}
+                    />
+                  </div>
+                  <span className="w-8 text-right font-mono text-xs text-slate-400">{count}</span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
